@@ -32,9 +32,18 @@ import {
 } from '@/components/ui/sheet'
 import { Card, CardContent } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   FolderKanban,
   TableProperties,
   Loader2,
+  Plus,
   Save,
   Search,
   Pencil,
@@ -131,6 +140,14 @@ export default function RetainersPage() {
   const [editNotes, setEditNotes] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+
+  // Add dialog
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [addName, setAddName] = useState('')
+  const [addClientId, setAddClientId] = useState<string>('none')
+  const [addStatus, setAddStatus] = useState('Active')
+  const [addMonthlyHours, setAddMonthlyHours] = useState<number>(0)
+  const [addSaving, setAddSaving] = useState(false)
 
   // -------------------------------------------------------------------------
   // Data fetching
@@ -253,6 +270,47 @@ export default function RetainersPage() {
       setConfirmDelete(false)
     }
     setDeleting(false)
+  }
+
+  const handleAddRetainer = async () => {
+    if (!addName.trim()) return
+    setAddSaving(true)
+
+    // Generate next retainer ID display
+    const existingIds = projects
+      .map((p) => p.project_id_display)
+      .filter((id): id is string => !!id && id.startsWith('RET-'))
+      .map((id) => parseInt(id.replace('RET-', ''), 10))
+      .filter((n) => !isNaN(n))
+    const nextNum = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1
+    const projectIdDisplay = `RET-${String(nextNum).padStart(3, '0')}`
+
+    const selectedClient = clients.find((c) => c.id === addClientId)
+
+    const { error } = await supabase.from('projects').insert({
+      project_id_display: projectIdDisplay,
+      project_name: addName.trim(),
+      project_type: 'Retainer',
+      category: 'retainer',
+      client_id: addClientId === 'none' ? null : addClientId,
+      client_name: selectedClient?.name ?? '',
+      status: addStatus,
+      monthly_hours_total: addMonthlyHours,
+      pm_split_pct: 50,
+      dev_split_pct: 50,
+      design_split_pct: 0,
+      strategy_split_pct: 0,
+    })
+
+    if (!error) {
+      await fetchProjects()
+      setShowAddDialog(false)
+      setAddName('')
+      setAddClientId('none')
+      setAddStatus('Active')
+      setAddMonthlyHours(0)
+    }
+    setAddSaving(false)
   }
 
   // -------------------------------------------------------------------------
@@ -391,6 +449,10 @@ export default function RetainersPage() {
         <span className="ml-auto text-sm text-slate-500">
           {filteredProjects.length} retainer{filteredProjects.length !== 1 ? 's' : ''}
         </span>
+        <Button size="sm" onClick={() => { setAddName(''); setAddClientId('none'); setAddStatus('Active'); setAddMonthlyHours(0); setShowAddDialog(true) }}>
+          <Plus className="h-4 w-4" />
+          Add Retainer
+        </Button>
       </div>
 
       {/* Loading */}
@@ -971,6 +1033,77 @@ export default function RetainersPage() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Add Retainer Dialog */}
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Retainer</DialogTitle>
+            <DialogDescription>
+              Create a new retainer or service agreement.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label>Retainer Name</Label>
+              <Input
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                placeholder="e.g. Client Service Agreement"
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Client</Label>
+              <Select value={addClientId} onValueChange={setAddClientId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select client" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No Client</SelectItem>
+                  {clients.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-1.5">
+                <Label>Status</Label>
+                <Select value={addStatus} onValueChange={setAddStatus}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Planning">Planning</SelectItem>
+                    <SelectItem value="Active">Active</SelectItem>
+                    <SelectItem value="On Hold">On Hold</SelectItem>
+                    <SelectItem value="Complete">Complete</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Monthly Hours</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={addMonthlyHours}
+                  onChange={(e) => setAddMonthlyHours(parseInt(e.target.value) || 0)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddRetainer} disabled={addSaving || !addName.trim()}>
+              {addSaving ? 'Creating...' : 'Create Retainer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
