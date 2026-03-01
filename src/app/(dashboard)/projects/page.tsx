@@ -41,6 +41,7 @@ import {
   Pencil,
   X,
   CalendarIcon,
+  Trash2,
 } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 import { cn } from '@/lib/utils'
@@ -129,6 +130,8 @@ export default function ProjectsPage() {
   const [editDevStartDate, setEditDevStartDate] = useState<Date | undefined>(undefined)
   const [editDevEndDate, setEditDevEndDate] = useState<Date | undefined>(undefined)
   const [editNotes, setEditNotes] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // -------------------------------------------------------------------------
   // Data fetching
@@ -193,6 +196,7 @@ export default function ProjectsPage() {
     setEditDevStartDate(project.dev_start_date ? parseISO(project.dev_start_date) : undefined)
     setEditDevEndDate(project.dev_end_date ? parseISO(project.dev_end_date) : undefined)
     setEditNotes(project.notes ?? '')
+    setConfirmDelete(false)
     setEditing(false)
     setSheetOpen(true)
   }
@@ -239,6 +243,23 @@ export default function ProjectsPage() {
       setEditing(false)
     }
     setSaving(false)
+  }
+
+  const handleDelete = async () => {
+    if (!selectedProject) return
+    setDeleting(true)
+    const { error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', selectedProject.id)
+
+    if (!error) {
+      await fetchProjects()
+      setSheetOpen(false)
+      setSelectedProject(null)
+      setConfirmDelete(false)
+    }
+    setDeleting(false)
   }
 
   // -------------------------------------------------------------------------
@@ -928,6 +949,46 @@ export default function ProjectsPage() {
                           onChange={(e) => setEditNotes(e.target.value)}
                           placeholder="Add notes..."
                         />
+                      </div>
+
+                      {/* Delete */}
+                      <Separator />
+                      <div>
+                        {!confirmDelete ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => setConfirmDelete(true)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete Project
+                          </Button>
+                        ) : (
+                          <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3">
+                            <p className="text-sm text-red-700 font-medium">
+                              Are you sure? This will permanently delete this project.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={handleDelete}
+                                disabled={deleting}
+                              >
+                                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                {deleting ? 'Deleting...' : 'Yes, Delete'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setConfirmDelete(false)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
