@@ -157,12 +157,14 @@ export function getAssignedHoursForWeek(
 
     if (project.category === 'retainer' || project.category === 'internal') {
       // Retainers & internal: monthly hours spread evenly across weeks
-      const monthlyTotal = project.monthly_hours_total ?? 0
+      const monthlyTotal = Number(project.monthly_hours_total) || 0
+      const pmPct = Number(project.pm_split_pct) || 0
+      const devPct = Number(project.dev_split_pct) || 0
       if (isAssignedPm) {
-        totalHours += (monthlyTotal * (project.pm_split_pct ?? 0) / 100) / WEEKS_PER_MONTH
+        totalHours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH
       }
       if (isAssignedDev) {
-        totalHours += (monthlyTotal * (project.dev_split_pct ?? 0) / 100) / WEEKS_PER_MONTH
+        totalHours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH
       }
     } else if (project.category === 'project') {
       // Projects: total hours spread across relevant timeline per role
@@ -170,14 +172,16 @@ export function getAssignedHoursForWeek(
 
       const projectStart = parseISO(project.start_date)
       const projectEnd = parseISO(project.end_date)
-      const totalProjectHours = project.monthly_hours_total ?? 0
+      const totalProjectHours = Number(project.monthly_hours_total) || 0
+      const pmPct = Number(project.pm_split_pct) || 0
+      const devPct = Number(project.dev_split_pct) || 0
 
       // PM: spread across full project timeline
       if (isAssignedPm) {
         if (weekStart <= projectEnd && weekEnd >= projectStart) {
           const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
           const pmWeeks = Math.max(1, pmDays / 7)
-          totalHours += (totalProjectHours * (project.pm_split_pct ?? 0) / 100) / pmWeeks
+          totalHours += (totalProjectHours * pmPct / 100) / pmWeeks
         }
       }
 
@@ -189,7 +193,7 @@ export function getAssignedHoursForWeek(
         if (weekStart <= devEnd && weekEnd >= devStart) {
           const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
           const devWeeks = Math.max(1, devDays / 7)
-          totalHours += (totalProjectHours * (project.dev_split_pct ?? 0) / 100) / devWeeks
+          totalHours += (totalProjectHours * devPct / 100) / devWeeks
         }
       }
     }

@@ -21,18 +21,10 @@ import {
   startOfMonth,
   endOfMonth,
   eachWeekOfInterval,
-  startOfYear,
   addMonths,
 } from 'date-fns'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Loader2, Download } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -41,19 +33,22 @@ import { Loader2, Download } from 'lucide-react'
 
 type ViewMode = 'weekly' | 'monthly'
 
-function getWeeksForRange(count: number): string[] {
+/** Generate `count` weeks starting from the current week going FORWARD */
+function getWeeksForward(count: number): string[] {
   const current = getCurrentWeekStart()
   const weeks: string[] = []
-  for (let i = count - 1; i >= 0; i--) {
-    weeks.push(navigateWeek(current, -i))
+  for (let i = 0; i < count; i++) {
+    weeks.push(navigateWeek(current, i))
   }
   return weeks
 }
 
-function getMonthsForYear(year: number): { value: string; label: string; weeks: string[] }[] {
+/** Generate 12 months starting from the current month going forward */
+function getMonthsForward(): { value: string; label: string; weeks: string[] }[] {
+  const now = new Date()
   const months: { value: string; label: string; weeks: string[] }[] = []
-  for (let m = 0; m < 12; m++) {
-    const monthDate = new Date(year, m, 1)
+  for (let i = 0; i < 12; i++) {
+    const monthDate = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), i)
     const monthStr = format(monthDate, 'yyyy-MM')
     const start = startOfMonth(monthDate)
     const end = endOfMonth(monthDate)
@@ -61,7 +56,7 @@ function getMonthsForYear(year: number): { value: string; label: string; weeks: 
       .map((w) => format(w, 'yyyy-MM-dd'))
     months.push({
       value: monthStr,
-      label: format(monthDate, 'MMM'),
+      label: format(monthDate, 'MMM yyyy'),
       weeks,
     })
   }
@@ -91,7 +86,6 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
 
   const [viewMode, setViewMode] = useState<ViewMode>('monthly')
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
 
   // Fetch data
   useEffect(() => {
@@ -115,9 +109,9 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Time periods
-  const weeks12 = useMemo(() => getWeeksForRange(12), [])
-  const months = useMemo(() => getMonthsForYear(selectedYear), [selectedYear])
+  // Time periods — both go FORWARD from the current week/month
+  const weeks12 = useMemo(() => getWeeksForward(12), [])
+  const months = useMemo(() => getMonthsForward(), [])
 
   // Sorted members: PM first, then Dev
   const sortedMembers = useMemo(() => {
@@ -180,18 +174,12 @@ export default function ReportsPage() {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `utilization-${viewMode}-${selectedYear}.csv`
+    link.download = `utilization-${viewMode}.csv`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
   }
-
-  // Year options
-  const yearOptions = useMemo(() => {
-    const current = new Date().getFullYear()
-    return [current - 1, current, current + 1]
-  }, [])
 
   if (loading) {
     return (
@@ -212,27 +200,10 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Team utilization overview
+            Team utilization forecast — current {viewMode === 'weekly' ? 'week' : 'month'} + 11 {viewMode === 'weekly' ? 'weeks' : 'months'} ahead
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {viewMode === 'monthly' && (
-            <Select
-              value={String(selectedYear)}
-              onValueChange={(v) => setSelectedYear(parseInt(v))}
-            >
-              <SelectTrigger className="w-[100px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {yearOptions.map((y) => (
-                  <SelectItem key={y} value={String(y)}>
-                    {y}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
           <div className="flex rounded-lg border overflow-hidden">
             <button
               onClick={() => setViewMode('weekly')}
@@ -272,13 +243,15 @@ export default function ReportsPage() {
                   <th className="sticky left-0 z-10 bg-slate-800 px-4 py-3 text-left font-semibold min-w-[160px]">
                     Person
                   </th>
-                  <th className="sticky left-[160px] z-10 bg-slate-800 px-3 py-3 text-left font-semibold min-w-[100px]">
-                    Department
+                  <th className="sticky left-[160px] z-10 bg-slate-800 px-3 py-3 text-left font-semibold min-w-[80px]">
+                    Dept
                   </th>
-                  {columnHeaders.map((header) => (
+                  {columnHeaders.map((header, i) => (
                     <th
                       key={header}
-                      className="px-3 py-3 text-center font-semibold min-w-[72px]"
+                      className={`px-3 py-3 text-center font-semibold min-w-[80px] ${
+                        i === 0 ? 'border-l-2 border-l-blue-400' : ''
+                      }`}
                     >
                       {header}
                     </th>
@@ -304,7 +277,9 @@ export default function ReportsPage() {
                       {row.cells.map((util, colIndex) => (
                         <td
                           key={colIndex}
-                          className={`px-3 py-2.5 text-center font-medium tabular-nums ${cellColor(util)}`}
+                          className={`px-3 py-2.5 text-center font-medium tabular-nums ${cellColor(util)} ${
+                            colIndex === 0 ? 'border-l-2 border-l-blue-400' : ''
+                          }`}
                         >
                           {util}%
                         </td>
