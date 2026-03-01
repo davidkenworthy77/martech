@@ -171,7 +171,21 @@ export default function TimeOffPage() {
   const [editHolidayType, setEditHolidayType] = useState('full_day')
   const [editHolidayHoursLost, setEditHolidayHoursLost] = useState('8')
   const [editHolidayNotes, setEditHolidayNotes] = useState('')
+  const [editHolidayMemberIds, setEditHolidayMemberIds] = useState<string[]>([])
   const [savingHoliday, setSavingHoliday] = useState(false)
+
+  // PTO edit sheet state
+  const [selectedPto, setSelectedPto] = useState<TimeOff | null>(null)
+  const [ptoSheetOpen, setPtoSheetOpen] = useState(false)
+  const [editingPto, setEditingPto] = useState(false)
+  const [editPtoMemberId, setEditPtoMemberId] = useState('')
+  const [editPtoType, setEditPtoType] = useState('Vacation')
+  const [editPtoStartDate, setEditPtoStartDate] = useState<Date | undefined>(undefined)
+  const [editPtoEndDate, setEditPtoEndDate] = useState<Date | undefined>(undefined)
+  const [editPtoStatus, setEditPtoStatus] = useState('Pending')
+  const [savingPto, setSavingPto] = useState(false)
+  const [confirmDeletePto, setConfirmDeletePto] = useState(false)
+  const [deletingPto, setDeletingPto] = useState(false)
 
   // ---------- Data Fetching ----------
 
@@ -258,6 +272,17 @@ export default function TimeOffPage() {
     setEditHolidayType(holiday.type ?? 'full_day')
     setEditHolidayHoursLost(String(holiday.hours_lost ?? 8))
     setEditHolidayNotes(holiday.notes ?? '')
+    // Use stored member ids, or fall back to country-based matching
+    if (holiday.team_member_ids && holiday.team_member_ids.length > 0) {
+      setEditHolidayMemberIds(holiday.team_member_ids)
+    } else {
+      const countries = holiday.countries ?? []
+      setEditHolidayMemberIds(
+        teamMembers
+          .filter((m) => countries.includes(locationToCountry(m.location)))
+          .map((m) => m.id)
+      )
+    }
     setEditingHoliday(false)
     setHolidaySheetOpen(true)
   }
@@ -270,15 +295,50 @@ export default function TimeOffPage() {
     setEditHolidayType('full_day')
     setEditHolidayHoursLost('8')
     setEditHolidayNotes('')
+    setEditHolidayMemberIds([])
     setEditingHoliday(true)
     setHolidaySheetOpen(true)
   }
 
   function toggleEditCountry(country: string) {
-    setEditHolidayCountries((prev) =>
-      prev.includes(country)
+    setEditHolidayCountries((prev) => {
+      const newCountries = prev.includes(country)
         ? prev.filter((c) => c !== country)
         : [...prev, country]
+
+      // Auto-update member selection when countries change
+      if (!prev.includes(country)) {
+        // Adding a country — add matching members that aren't already selected
+        const newMemberIds = teamMembers
+          .filter((m) => locationToCountry(m.location) === country)
+          .map((m) => m.id)
+        setEditHolidayMemberIds((prevIds) => {
+          const set = new Set(prevIds)
+          newMemberIds.forEach((id) => set.add(id))
+          return Array.from(set)
+        })
+      } else {
+        // Removing a country — remove members that belong ONLY to that country
+        const remainingCountries = newCountries
+        const membersStillCovered = new Set(
+          teamMembers
+            .filter((m) => remainingCountries.includes(locationToCountry(m.location)))
+            .map((m) => m.id)
+        )
+        setEditHolidayMemberIds((prevIds) =>
+          prevIds.filter((id) => membersStillCovered.has(id))
+        )
+      }
+
+      return newCountries
+    })
+  }
+
+  function toggleEditMember(memberId: string) {
+    setEditHolidayMemberIds((prev) =>
+      prev.includes(memberId)
+        ? prev.filter((id) => id !== memberId)
+        : [...prev, memberId]
     )
   }
 
@@ -297,6 +357,7 @@ export default function TimeOffPage() {
       hours_lost: hoursLost,
       notes: editHolidayNotes.trim() || null,
       year: editHolidayDate.getFullYear(),
+      team_member_ids: editHolidayMemberIds.length > 0 ? editHolidayMemberIds : null,
     }
 
     if (selectedHoliday) {
@@ -383,6 +444,96 @@ export default function TimeOffPage() {
     fetchData()
   }
 
+  // ---------- PTO Edit Sheet ----------
+
+  function openPtoSheet(entry: TimeOff) {
+    setSelectedPto(entry)
+    setEditPtoMemberId(entry.team_member_id)
+    setEditPtoType(entry.type ?? 'Vacation')
+    setEditPtoStartDate(parseISO(entry.start_date))
+    setEditPtoEndDate(parseISO(entry.end_date))
+    setEditPtoStatus(entry.status ?? 'Pending')
+    setConfirmDeletePto(false)
+    setEditingPto(false)
+    setPtoSheetOpen(true)
+  }
+
+  const editPtoBusinessDays = useMemo(() => {
+    if (!editPtoStartDate || !editPtoEndDate) return 0
+    return getBusinessDays(editPtoStartDate, editPtoEndDate)
+  }, [editPtoStartDate, editPtoEndDate])
+
+  async function handleSavePto() {
+    if (!selectedPto || !editPtoMemberId || !editPtoStartDate || !editPtoEndDate) return
+    setSavingPto(true)
+
+    const { error } = await supabase
+      .from('time_off')
+      .update({
+        team_member_id: editPtoMemberId,
+        type: editPtoType,
+        start_date: format(editPtoStartDate, 'yyyy-MM-dd'),
+        end_date: format(editPtoEndDate, 'yyyy-MM-dd'),
+        days: editPtoBusinessDays,
+        status: editPtoStatus,
+      })
+      .eq('id', selectedPto.id)
+
+    if (!error) {
+      await fetchData()
+      setEditingPto(false)
+      // Update selectedPto with new values
+      setSelectedPto((prev) =>
+        prev
+          ? {
+              ...prev,
+              team_member_id: editPtoMemberId,
+              type: editPtoType,
+              start_date: format(editPtoStartDate, 'yyyy-MM-dd'),
+              end_date: format(editPtoEndDate, 'yyyy-MM-dd'),
+              days: editPtoBusinessDays,
+              status: editPtoStatus,
+            }
+          : prev
+      )
+    }
+    setSavingPto(false)
+  }
+
+  async function handleDeletePto() {
+    if (!selectedPto) return
+    setDeletingPto(true)
+
+    const { error } = await supabase
+      .from('time_off')
+      .delete()
+      .eq('id', selectedPto.id)
+
+    if (!error) {
+      await fetchData()
+      setPtoSheetOpen(false)
+      setSelectedPto(null)
+      setConfirmDeletePto(false)
+    }
+    setDeletingPto(false)
+  }
+
+  // Affected members for the sheet (live preview during editing)
+  const sheetAffectedMembers = useMemo(() => {
+    if (editingHoliday) {
+      // In edit mode, use the explicit member id selection
+      return teamMembers.filter((m) => editHolidayMemberIds.includes(m.id))
+    }
+    if (selectedHoliday) {
+      // In view mode, use stored ids or fall back to country matching
+      if (selectedHoliday.team_member_ids && selectedHoliday.team_member_ids.length > 0) {
+        return teamMembers.filter((m) => selectedHoliday.team_member_ids!.includes(m.id))
+      }
+      return membersAffectedByHoliday(selectedHoliday)
+    }
+    return []
+  }, [editingHoliday, editHolidayMemberIds, selectedHoliday, teamMembers, membersAffectedByHoliday])
+
   // ---------- Render ----------
 
   if (loading) {
@@ -392,13 +543,6 @@ export default function TimeOffPage() {
       </div>
     )
   }
-
-  // Affected members for the sheet (live preview during editing)
-  const sheetAffectedMembers = editingHoliday
-    ? membersAffectedByCountries(editHolidayCountries)
-    : selectedHoliday
-      ? membersAffectedByHoliday(selectedHoliday)
-      : []
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-8">
@@ -482,7 +626,11 @@ export default function TimeOffPage() {
                   filteredTimeOff.map((entry) => {
                     const member = memberMap.get(entry.team_member_id)
                     return (
-                      <TableRow key={entry.id}>
+                      <TableRow
+                        key={entry.id}
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => openPtoSheet(entry)}
+                      >
                         <TableCell className="pl-4 font-medium">
                           {member?.name ?? 'Unknown'}
                         </TableCell>
@@ -517,7 +665,7 @@ export default function TimeOffPage() {
                             {entry.status}
                           </Badge>
                         </TableCell>
-                        <TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
                           {entry.status === 'Pending' ? (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -953,6 +1101,16 @@ export default function TimeOffPage() {
                         setEditHolidayType(selectedHoliday.type ?? 'full_day')
                         setEditHolidayHoursLost(String(selectedHoliday.hours_lost ?? 8))
                         setEditHolidayNotes(selectedHoliday.notes ?? '')
+                        if (selectedHoliday.team_member_ids && selectedHoliday.team_member_ids.length > 0) {
+                          setEditHolidayMemberIds(selectedHoliday.team_member_ids)
+                        } else {
+                          const countries = selectedHoliday.countries ?? []
+                          setEditHolidayMemberIds(
+                            teamMembers
+                              .filter((m) => countries.includes(locationToCountry(m.location)))
+                              .map((m) => m.id)
+                          )
+                        }
                         setEditingHoliday(false)
                       } else {
                         // New holiday — just close
@@ -1157,9 +1315,46 @@ export default function TimeOffPage() {
               {/* Affected Team Members */}
               <div className="grid gap-2">
                 <span className="text-xs font-medium text-muted-foreground">
-                  Affected Team Members ({sheetAffectedMembers.length})
+                  {editingHoliday ? 'Team Members' : 'Affected Team Members'} ({sheetAffectedMembers.length})
                 </span>
-                {sheetAffectedMembers.length === 0 ? (
+
+                {editingHoliday ? (
+                  <div className="grid gap-1.5 max-h-[300px] overflow-y-auto">
+                    {teamMembers.map((m) => {
+                      const memberCountry = locationToCountry(m.location)
+                      const cb = countryBadge(memberCountry)
+                      const isChecked = editHolidayMemberIds.includes(m.id)
+                      return (
+                        <label
+                          key={m.id}
+                          className={cn(
+                            'flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer transition-colors',
+                            isChecked ? 'bg-slate-50 border-slate-300' : 'opacity-60 hover:opacity-100'
+                          )}
+                        >
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={() => toggleEditMember(m.id)}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-slate-900 truncate">
+                              {m.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {m.role} &middot; {m.department}
+                            </p>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={cn('text-xs shrink-0', cb.className)}
+                          >
+                            {cb.flag} {m.location}
+                          </Badge>
+                        </label>
+                      )
+                    })}
+                  </div>
+                ) : sheetAffectedMembers.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     No team members are affected by this holiday.
                   </p>
@@ -1221,6 +1416,281 @@ export default function TimeOffPage() {
               )}
             </div>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* ------------------------------------------------------------------ */}
+      {/*  PTO Detail / Edit Sheet                                            */}
+      {/* ------------------------------------------------------------------ */}
+      <Sheet open={ptoSheetOpen} onOpenChange={(open) => {
+        setPtoSheetOpen(open)
+        if (!open) {
+          setEditingPto(false)
+          setConfirmDeletePto(false)
+        }
+      }}>
+        <SheetContent side="right" showCloseButton={false} className="w-full sm:max-w-lg flex flex-col">
+          {selectedPto && (
+            <>
+              <SheetHeader className="flex-none">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <SheetTitle className="text-lg">
+                      {editingPto ? 'Edit Time Off' : 'Time Off Details'}
+                    </SheetTitle>
+                    <SheetDescription>
+                      {editingPto
+                        ? 'Update the time off request below.'
+                        : `${memberMap.get(selectedPto.team_member_id)?.name ?? 'Unknown'} — ${selectedPto.type ?? 'PTO'}`}
+                    </SheetDescription>
+                  </div>
+                  {!editingPto && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEditingPto(true)}
+                      className="shrink-0"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
+                    </Button>
+                  )}
+                  {editingPto && (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setEditPtoMemberId(selectedPto.team_member_id)
+                          setEditPtoType(selectedPto.type ?? 'Vacation')
+                          setEditPtoStartDate(parseISO(selectedPto.start_date))
+                          setEditPtoEndDate(parseISO(selectedPto.end_date))
+                          setEditPtoStatus(selectedPto.status ?? 'Pending')
+                          setConfirmDeletePto(false)
+                          setEditingPto(false)
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleSavePto}
+                        disabled={savingPto || !editPtoMemberId || !editPtoStartDate || !editPtoEndDate}
+                      >
+                        {savingPto ? 'Saving...' : 'Save'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </SheetHeader>
+
+              <div className="flex-1 min-h-0 overflow-y-auto px-4">
+                <div className="grid gap-5 py-4">
+                  {/* Team Member */}
+                  {editingPto ? (
+                    <div className="grid gap-1.5">
+                      <Label>Team Member</Label>
+                      <Select value={editPtoMemberId} onValueChange={setEditPtoMemberId}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select team member" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {teamMembers.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              {m.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="grid gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">Team Member</span>
+                      <span className="text-sm font-medium text-slate-900">
+                        {memberMap.get(selectedPto.team_member_id)?.name ?? 'Unknown'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Type */}
+                  {editingPto ? (
+                    <div className="grid gap-1.5">
+                      <Label>Type</Label>
+                      <Select value={editPtoType} onValueChange={setEditPtoType}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Vacation">Vacation</SelectItem>
+                          <SelectItem value="Personal">Personal</SelectItem>
+                          <SelectItem value="Sick">Sick</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="grid gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">Type</span>
+                      <Badge
+                        variant="outline"
+                        className={cn('text-xs font-medium w-fit', typeColor(selectedPto.type ?? ''))}
+                      >
+                        {selectedPto.type}
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* Dates */}
+                  {editingPto ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-1.5">
+                        <Label>Start Date</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                'w-full justify-start text-left font-normal',
+                                !editPtoStartDate && 'text-muted-foreground'
+                              )}
+                            >
+                              <CalendarIcon className="h-4 w-4" />
+                              {editPtoStartDate ? format(editPtoStartDate, 'MMM d, yyyy') : 'Pick a date'}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={editPtoStartDate}
+                              onSelect={(d) => setEditPtoStartDate(d ?? undefined)}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label>End Date</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                'w-full justify-start text-left font-normal',
+                                !editPtoEndDate && 'text-muted-foreground'
+                              )}
+                            >
+                              <CalendarIcon className="h-4 w-4" />
+                              {editPtoEndDate ? format(editPtoEndDate, 'MMM d, yyyy') : 'Pick a date'}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <Calendar
+                              mode="single"
+                              selected={editPtoEndDate}
+                              onSelect={(d) => setEditPtoEndDate(d ?? undefined)}
+                              disabled={(date) => editPtoStartDate ? date < editPtoStartDate : false}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-1">
+                        <span className="text-xs font-medium text-muted-foreground">Start Date</span>
+                        <span className="text-sm text-slate-900">
+                          {format(parseISO(selectedPto.start_date), 'MMM d, yyyy')}
+                        </span>
+                      </div>
+                      <div className="grid gap-1">
+                        <span className="text-xs font-medium text-muted-foreground">End Date</span>
+                        <span className="text-sm text-slate-900">
+                          {format(parseISO(selectedPto.end_date), 'MMM d, yyyy')}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Business Days */}
+                  <div className="grid gap-1">
+                    <span className="text-xs font-medium text-muted-foreground">Business Days</span>
+                    <span className="text-sm font-semibold text-slate-900">
+                      {editingPto ? editPtoBusinessDays : (selectedPto.days ?? '-')}
+                    </span>
+                  </div>
+
+                  {/* Status */}
+                  {editingPto ? (
+                    <div className="grid gap-1.5">
+                      <Label>Status</Label>
+                      <Select value={editPtoStatus} onValueChange={setEditPtoStatus}>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Pending">Pending</SelectItem>
+                          <SelectItem value="Approved">Approved</SelectItem>
+                          <SelectItem value="Denied">Denied</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="grid gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">Status</span>
+                      <Badge
+                        variant="outline"
+                        className={cn('text-xs font-medium w-fit', statusColor(selectedPto.status ?? ''))}
+                      >
+                        {selectedPto.status}
+                      </Badge>
+                    </div>
+                  )}
+
+                  {/* Delete */}
+                  {editingPto && (
+                    <>
+                      <Separator />
+                      <div>
+                        {!confirmDeletePto ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => setConfirmDeletePto(true)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete Time Off
+                          </Button>
+                        ) : (
+                          <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3">
+                            <p className="text-sm text-red-700 font-medium">
+                              Are you sure? This will permanently delete this time off record.
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={handleDeletePto}
+                                disabled={deletingPto}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                {deletingPto ? 'Deleting...' : 'Yes, Delete'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setConfirmDeletePto(false)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </SheetContent>
       </Sheet>
     </div>

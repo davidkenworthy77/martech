@@ -44,6 +44,7 @@ export type Database = {
           id: string
           name: string
           notes: string | null
+          team_member_ids: string[] | null
           type: string | null
           year: number | null
         }
@@ -54,6 +55,7 @@ export type Database = {
           id?: string
           name: string
           notes?: string | null
+          team_member_ids?: string[] | null
           type?: string | null
           year?: number | null
         }
@@ -64,6 +66,7 @@ export type Database = {
           id?: string
           name?: string
           notes?: string | null
+          team_member_ids?: string[] | null
           type?: string | null
           year?: number | null
         }

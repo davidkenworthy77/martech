@@ -31,10 +31,15 @@ export function getHolidayHoursForWeek(
   let holidayHours = 0
   for (const day of weekDays) {
     const dayStr = format(day, 'yyyy-MM-dd')
-    // Check if member's country is in the holiday's countries array
-    const holiday = holidays.find(h =>
-      h.date === dayStr && (h.countries ?? []).includes(country)
-    )
+    // Check if member is affected by any holiday on this day
+    // Use team_member_ids if set, otherwise fall back to country matching
+    const holiday = holidays.find(h => {
+      if (h.date !== dayStr) return false
+      if (h.team_member_ids && h.team_member_ids.length > 0) {
+        return h.team_member_ids.includes(member.id)
+      }
+      return (h.countries ?? []).includes(country)
+    })
     if (holiday) {
       holidayHours += holiday.hours_lost ?? 8
     }
