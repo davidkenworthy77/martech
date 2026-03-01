@@ -290,7 +290,7 @@ export default function RetainersPage() {
     const { error } = await supabase.from('projects').insert({
       project_id_display: projectIdDisplay,
       project_name: addName.trim(),
-      project_type: 'Retainer',
+      project_type: 'Service Agreement',
       category: 'retainer',
       client_id: addClientId === 'none' ? null : addClientId,
       client_name: selectedClient?.name ?? '',
@@ -302,7 +302,10 @@ export default function RetainersPage() {
       strategy_split_pct: 0,
     })
 
-    if (!error) {
+    if (error) {
+      console.error('Failed to create retainer:', error)
+      alert(`Failed to create retainer: ${error.message}`)
+    } else {
       await fetchProjects()
       setShowAddDialog(false)
       setAddName('')

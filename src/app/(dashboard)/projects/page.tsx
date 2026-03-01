@@ -297,7 +297,7 @@ export default function ProjectsPage() {
     const { error } = await supabase.from('projects').insert({
       project_id_display: projectIdDisplay,
       project_name: addName.trim(),
-      project_type: 'Website',
+      project_type: 'Full Website',
       category: 'project',
       client_id: addClientId === 'none' ? null : addClientId,
       client_name: selectedClient?.name ?? '',
@@ -309,7 +309,10 @@ export default function ProjectsPage() {
       strategy_split_pct: 0,
     })
 
-    if (!error) {
+    if (error) {
+      console.error('Failed to create project:', error)
+      alert(`Failed to create project: ${error.message}`)
+    } else {
       await fetchProjects()
       setShowAddDialog(false)
       setAddName('')
