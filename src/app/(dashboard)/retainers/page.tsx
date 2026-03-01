@@ -32,10 +32,9 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Card, CardContent } from '@/components/ui/card'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Calendar } from '@/components/ui/calendar'
 import {
-  Hammer,
+  FolderKanban,
+  TableProperties,
   Loader2,
   Users,
   Clock,
@@ -43,10 +42,7 @@ import {
   Search,
   Pencil,
   X,
-  CalendarIcon,
 } from 'lucide-react'
-import { format, parseISO } from 'date-fns'
-import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +57,10 @@ type AllocationWithMember = WeeklyAllocation & {
   team_member?: TeamMember | null
 }
 
+type ViewMode = 'table' | 'kanban'
+
 const STATUSES = ['All', 'Planning', 'Active', 'On Hold', 'Complete'] as const
+const KANBAN_STATUSES = ['Planning', 'Active', 'On Hold', 'Complete'] as const
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -82,25 +81,26 @@ function statusBadgeClass(status: string): string {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Date formatter
-// ---------------------------------------------------------------------------
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '--'
-  const d = new Date(dateStr + 'T00:00:00')
-  return d.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+function kanbanColumnBorder(status: string): string {
+  switch (status) {
+    case 'Planning':
+      return 'border-t-yellow-400'
+    case 'Active':
+      return 'border-t-green-400'
+    case 'On Hold':
+      return 'border-t-orange-400'
+    case 'Complete':
+      return 'border-t-gray-400'
+    default:
+      return 'border-t-gray-400'
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Main page component
 // ---------------------------------------------------------------------------
 
-export default function ProjectsPage() {
+export default function RetainersPage() {
   const supabase = createClient()
 
   // Data state
@@ -112,6 +112,9 @@ export default function ProjectsPage() {
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string>('All')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // View state
+  const [viewMode, setViewMode] = useState<ViewMode>('table')
 
   // Detail sheet state
   const [selectedProject, setSelectedProject] = useState<ProjectWithLeads | null>(null)
@@ -129,11 +132,9 @@ export default function ProjectsPage() {
   const [editName, setEditName] = useState('')
   const [editClientId, setEditClientId] = useState<string>('none')
   const [editStatus, setEditStatus] = useState('Active')
-  const [editTotalHours, setEditTotalHours] = useState<number>(0)
+  const [editMonthlyHours, setEditMonthlyHours] = useState<number>(0)
   const [editLeadPmId, setEditLeadPmId] = useState<string>('')
   const [editLeadDevId, setEditLeadDevId] = useState<string>('')
-  const [editStartDate, setEditStartDate] = useState<Date | undefined>(undefined)
-  const [editEndDate, setEditEndDate] = useState<Date | undefined>(undefined)
   const [editNotes, setEditNotes] = useState('')
 
   // -------------------------------------------------------------------------
@@ -145,7 +146,7 @@ export default function ProjectsPage() {
     const { data, error } = await supabase
       .from('projects')
       .select('*, lead_pm:team_members!projects_lead_pm_id_fkey(*), lead_dev:team_members!projects_lead_dev_id_fkey(*)')
-      .eq('category', 'project')
+      .eq('category', 'retainer')
       .order('project_id_display', { ascending: true })
 
     if (!error && data) {
@@ -206,11 +207,9 @@ export default function ProjectsPage() {
     setEditName(project.project_name)
     setEditClientId(project.client_id ?? 'none')
     setEditStatus(project.status ?? 'Active')
-    setEditTotalHours(project.monthly_hours_total ?? 0)
+    setEditMonthlyHours(project.monthly_hours_total ?? 0)
     setEditLeadPmId(project.lead_pm_id ?? 'none')
     setEditLeadDevId(project.lead_dev_id ?? 'none')
-    setEditStartDate(project.start_date ? parseISO(project.start_date) : undefined)
-    setEditEndDate(project.end_date ? parseISO(project.end_date) : undefined)
     setEditNotes(project.notes ?? '')
     setEditing(false)
     setSheetOpen(true)
@@ -227,13 +226,11 @@ export default function ProjectsPage() {
       client_id: editClientId === 'none' ? null : editClientId,
       client_name: selectedClient?.name ?? '',
       status: editStatus,
-      monthly_hours_total: editTotalHours,
+      monthly_hours_total: editMonthlyHours,
       pm_split_pct: editPmSplit,
       dev_split_pct: editDevSplit,
       lead_pm_id: editLeadPmId === 'none' ? null : editLeadPmId,
       lead_dev_id: editLeadDevId === 'none' ? null : editLeadDevId,
-      start_date: editStartDate ? format(editStartDate, 'yyyy-MM-dd') : null,
-      end_date: editEndDate ? format(editEndDate, 'yyyy-MM-dd') : null,
       notes: editNotes || null,
     }
 
@@ -243,7 +240,9 @@ export default function ProjectsPage() {
       .eq('id', selectedProject.id)
 
     if (!error) {
+      // Re-fetch to get updated lead joins
       await fetchProjects()
+      // Update selectedProject locally
       const leadPm = teamMembers.find(m => m.id === editLeadPmId) ?? null
       const leadDev = teamMembers.find(m => m.id === editLeadDevId) ?? null
       setSelectedProject(prev => prev ? {
@@ -281,6 +280,14 @@ export default function ProjectsPage() {
       return true
     })
   }, [projects, statusFilter, searchQuery])
+
+  const kanbanGroups = useMemo(() => {
+    const groups: Record<string, ProjectWithLeads[]> = {}
+    for (const status of KANBAN_STATUSES) {
+      groups[status] = filteredProjects.filter((p) => p.status === status)
+    }
+    return groups
+  }, [filteredProjects])
 
   // Aggregate allocations by team member for the detail sheet
   const allocationsByMember = useMemo(() => {
@@ -329,11 +336,31 @@ export default function ProjectsPage() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Projects</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Website builds and larger project work
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Retainers</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Ongoing service agreements with monthly hours
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={viewMode === 'table' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('table')}
+          >
+            <TableProperties className="h-4 w-4" />
+            Table
+          </Button>
+          <Button
+            variant={viewMode === 'kanban' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setViewMode('kanban')}
+          >
+            <FolderKanban className="h-4 w-4" />
+            Kanban
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -341,7 +368,7 @@ export default function ProjectsPage() {
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
           <Input
-            placeholder="Search projects..."
+            placeholder="Search retainers..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9 w-64"
@@ -375,7 +402,7 @@ export default function ProjectsPage() {
         )}
 
         <span className="ml-auto text-sm text-slate-500">
-          {filteredProjects.length} project{filteredProjects.length !== 1 ? 's' : ''}
+          {filteredProjects.length} retainer{filteredProjects.length !== 1 ? 's' : ''}
         </span>
       </div>
 
@@ -383,21 +410,21 @@ export default function ProjectsPage() {
       {loading && (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-          <span className="ml-2 text-slate-500">Loading projects...</span>
+          <span className="ml-2 text-slate-500">Loading retainers...</span>
         </div>
       )}
 
       {/* Empty state */}
       {!loading && filteredProjects.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-          <Hammer className="h-12 w-12 mb-3" />
-          <p className="text-lg font-medium">No projects found</p>
+          <FolderKanban className="h-12 w-12 mb-3" />
+          <p className="text-lg font-medium">No retainers found</p>
           <p className="text-sm">Try adjusting your filters</p>
         </div>
       )}
 
       {/* Table View */}
-      {!loading && filteredProjects.length > 0 && (
+      {!loading && filteredProjects.length > 0 && viewMode === 'table' && (
         <Card className="py-0">
           <CardContent className="p-0">
             <Table>
@@ -405,13 +432,11 @@ export default function ProjectsPage() {
                 <TableRow className="bg-slate-50/80">
                   <TableHead className="pl-4">ID</TableHead>
                   <TableHead>Client</TableHead>
-                  <TableHead>Project Name</TableHead>
+                  <TableHead>Retainer Name</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Total Hrs</TableHead>
+                  <TableHead className="text-right">Monthly Hrs</TableHead>
                   <TableHead className="text-right">PM Hrs</TableHead>
                   <TableHead className="text-right">Dev Hrs</TableHead>
-                  <TableHead>Start Date</TableHead>
-                  <TableHead>End Date</TableHead>
                   <TableHead>Lead PM</TableHead>
                   <TableHead>Lead Dev</TableHead>
                 </TableRow>
@@ -455,12 +480,6 @@ export default function ProjectsPage() {
                         ({project.dev_split_pct ?? 0}%)
                       </span>
                     </TableCell>
-                    <TableCell className="text-sm text-slate-600">
-                      {formatDate(project.start_date)}
-                    </TableCell>
-                    <TableCell className="text-sm text-slate-600">
-                      {formatDate(project.end_date)}
-                    </TableCell>
                     <TableCell className="text-slate-700">
                       {project.lead_pm?.name ?? '--'}
                     </TableCell>
@@ -475,14 +494,101 @@ export default function ProjectsPage() {
         </Card>
       )}
 
-      {/* Project Detail Sheet */}
+      {/* Kanban View */}
+      {!loading && filteredProjects.length > 0 && viewMode === 'kanban' && (
+        <div className="grid grid-cols-4 gap-4">
+          {KANBAN_STATUSES.map((status) => (
+            <div key={status} className="space-y-3">
+              {/* Column header */}
+              <div
+                className={`rounded-lg border border-t-4 ${kanbanColumnBorder(status)} bg-white px-3 py-2.5`}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-700">{status}</h3>
+                  <Badge variant="secondary" className="bg-slate-100 text-slate-600 text-xs">
+                    {kanbanGroups[status].length}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Column cards */}
+              <div className="space-y-2.5">
+                {kanbanGroups[status].map((project) => (
+                  <div
+                    key={project.id}
+                    className="cursor-pointer rounded-lg border bg-white p-3.5 shadow-sm transition-shadow hover:shadow-md"
+                    onClick={() => handleProjectClick(project)}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <span className="font-mono text-[11px] text-slate-400">
+                        {project.project_id_display ?? '--'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-500 mb-0.5">{project.client_name}</p>
+                    <p className="text-sm font-medium text-slate-900 mb-3 line-clamp-2">
+                      {project.project_name}
+                    </p>
+
+                    <Separator className="my-2.5" />
+
+                    <div className="grid grid-cols-3 gap-1 text-xs">
+                      <div className="text-center">
+                        <p className="text-slate-400">Total</p>
+                        <p className="font-semibold text-slate-700 tabular-nums">
+                          {project.monthly_hours_total ?? 0}h
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-slate-400">PM</p>
+                        <p className="font-semibold text-slate-700 tabular-nums">
+                          {calcPmHours(project)}h
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-slate-400">Dev</p>
+                        <p className="font-semibold text-slate-700 tabular-nums">
+                          {calcDevHours(project)}h
+                        </p>
+                      </div>
+                    </div>
+
+                    {(project.lead_pm || project.lead_dev) && (
+                      <div className="mt-2.5 flex flex-wrap gap-1">
+                        {project.lead_pm && (
+                          <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">
+                            PM: {project.lead_pm.name.split(' ')[0]}
+                          </span>
+                        )}
+                        {project.lead_dev && (
+                          <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">
+                            Dev: {project.lead_dev.name.split(' ')[0]}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {kanbanGroups[status].length === 0 && (
+                  <div className="rounded-lg border border-dashed bg-slate-50/50 p-6 text-center">
+                    <p className="text-xs text-slate-400">No retainers</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Retainer Detail Sheet */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent side="right" className="w-full sm:max-w-lg" showCloseButton={false}>
           {selectedProject && (
             <>
               {!editing ? (
                 <>
-                  {/* ---- VIEW MODE ---- */}
+                  {/* ---------- VIEW MODE ---------- */}
                   <SheetHeader>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -507,7 +613,7 @@ export default function ProjectsPage() {
                       {/* Hours summary */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          Total Hours Breakdown
+                          Monthly Hours Breakdown
                         </h4>
                         <div className="grid grid-cols-3 gap-3">
                           <div className="rounded-lg border bg-slate-50 p-3 text-center">
@@ -515,7 +621,7 @@ export default function ProjectsPage() {
                             <p className="text-xl font-bold text-slate-900 tabular-nums">
                               {selectedProject.monthly_hours_total ?? 0}
                             </p>
-                            <p className="text-[10px] text-slate-400">hrs total</p>
+                            <p className="text-[10px] text-slate-400">hrs/month</p>
                           </div>
                           <div className="rounded-lg border bg-blue-50/50 p-3 text-center">
                             <p className="text-xs text-blue-600">PM Hours</p>
@@ -530,58 +636,6 @@ export default function ProjectsPage() {
                               {calcDevHours(selectedProject)}
                             </p>
                             <p className="text-[10px] text-emerald-400">{selectedProject.dev_split_pct ?? 0}%</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* Timeline */}
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          Timeline
-                        </h4>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-lg border p-3">
-                            <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Start Date
-                            </p>
-                            <p className="text-sm font-medium text-slate-900">
-                              {formatDate(selectedProject.start_date)}
-                            </p>
-                          </div>
-                          <div className="rounded-lg border p-3">
-                            <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              End Date
-                            </p>
-                            <p className="text-sm font-medium text-slate-900">
-                              {formatDate(selectedProject.end_date)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* PM/Dev Split - read-only */}
-                      <div>
-                        <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          PM / Dev Split
-                        </h4>
-                        <div className="space-y-2">
-                          <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden flex">
-                            <div
-                              className="bg-blue-400 transition-all duration-200"
-                              style={{ width: `${selectedProject.pm_split_pct ?? 0}%` }}
-                            />
-                            <div
-                              className="bg-emerald-400 transition-all duration-200"
-                              style={{ width: `${selectedProject.dev_split_pct ?? 0}%` }}
-                            />
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span>PM {selectedProject.pm_split_pct ?? 0}%</span>
-                            <span>Dev {selectedProject.dev_split_pct ?? 0}%</span>
                           </div>
                         </div>
                       </div>
@@ -701,6 +755,46 @@ export default function ProjectsPage() {
                         )}
                       </div>
 
+                      {/* Project dates */}
+                      {(selectedProject.start_date || selectedProject.end_date) && (
+                        <>
+                          <Separator />
+                          <div>
+                            <h4 className="text-sm font-semibold text-slate-900 mb-3">
+                              Timeline
+                            </h4>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="rounded-lg border p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
+                                  Start Date
+                                </p>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {selectedProject.start_date
+                                    ? new Date(selectedProject.start_date).toLocaleDateString(
+                                        'en-US',
+                                        { month: 'short', day: 'numeric', year: 'numeric' }
+                                      )
+                                    : '--'}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border p-3">
+                                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
+                                  End Date
+                                </p>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {selectedProject.end_date
+                                    ? new Date(selectedProject.end_date).toLocaleDateString(
+                                        'en-US',
+                                        { month: 'short', day: 'numeric', year: 'numeric' }
+                                      )
+                                    : '--'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
                       {/* Notes */}
                       {selectedProject.notes && (
                         <>
@@ -720,10 +814,10 @@ export default function ProjectsPage() {
                 </>
               ) : (
                 <>
-                  {/* ---- EDIT MODE ---- */}
+                  {/* ---------- EDIT MODE ---------- */}
                   <SheetHeader>
                     <div className="flex items-center justify-between">
-                      <SheetTitle className="text-lg">Edit Project</SheetTitle>
+                      <SheetTitle className="text-lg">Edit Retainer</SheetTitle>
                       <div className="flex items-center gap-2">
                         <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
                           <X className="h-4 w-4" />
@@ -735,18 +829,15 @@ export default function ProjectsPage() {
                         </Button>
                       </div>
                     </div>
-                    <SheetDescription>Edit project details below</SheetDescription>
+                    <SheetDescription>Edit retainer details below</SheetDescription>
                   </SheetHeader>
 
                   <div className="flex-1 overflow-y-auto px-4">
                     <div className="space-y-6 pb-6">
-                      {/* Project Name */}
+                      {/* Name */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Project Name</Label>
-                        <Input
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                        />
+                        <Label className="text-xs text-slate-600">Retainer Name</Label>
+                        <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
                       </div>
 
                       {/* Client */}
@@ -767,9 +858,7 @@ export default function ProjectsPage() {
                       <div className="space-y-1.5">
                         <Label className="text-xs text-slate-600">Status</Label>
                         <Select value={editStatus} onValueChange={setEditStatus}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="Planning">Planning</SelectItem>
                             <SelectItem value="Active">Active</SelectItem>
@@ -779,35 +868,28 @@ export default function ProjectsPage() {
                         </Select>
                       </div>
 
-                      {/* Total Hours */}
+                      {/* Monthly Hours */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Total Hours</Label>
+                        <Label className="text-xs text-slate-600">Monthly Hours</Label>
                         <Input
                           type="number"
                           min={0}
-                          value={editTotalHours}
-                          onChange={(e) => setEditTotalHours(parseInt(e.target.value) || 0)}
+                          value={editMonthlyHours}
+                          onChange={(e) => setEditMonthlyHours(parseInt(e.target.value) || 0)}
                         />
                       </div>
 
                       <Separator />
 
-                      {/* PM / Dev Split */}
+                      {/* PM/Dev Split */}
                       <div>
-                        <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          PM / Dev Split
-                        </h4>
+                        <h4 className="text-sm font-semibold text-slate-900 mb-3">PM / Dev Split</h4>
                         <div className="space-y-4">
                           <div className="flex items-center gap-4">
                             <div className="flex-1 space-y-1.5">
-                              <Label htmlFor="pm-split" className="text-xs text-slate-600">
-                                PM Split (%)
-                              </Label>
+                              <Label className="text-xs text-slate-600">PM Split (%)</Label>
                               <Input
-                                id="pm-split"
-                                type="number"
-                                min={0}
-                                max={100}
+                                type="number" min={0} max={100}
                                 value={editPmSplit}
                                 onChange={(e) => {
                                   const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
@@ -817,14 +899,9 @@ export default function ProjectsPage() {
                               />
                             </div>
                             <div className="flex-1 space-y-1.5">
-                              <Label htmlFor="dev-split" className="text-xs text-slate-600">
-                                Dev Split (%)
-                              </Label>
+                              <Label className="text-xs text-slate-600">Dev Split (%)</Label>
                               <Input
-                                id="dev-split"
-                                type="number"
-                                min={0}
-                                max={100}
+                                type="number" min={0} max={100}
                                 value={editDevSplit}
                                 onChange={(e) => {
                                   const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
@@ -834,17 +911,10 @@ export default function ProjectsPage() {
                               />
                             </div>
                           </div>
-
                           {/* Split visual bar */}
                           <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden flex">
-                            <div
-                              className="bg-blue-400 transition-all duration-200"
-                              style={{ width: `${editPmSplit}%` }}
-                            />
-                            <div
-                              className="bg-emerald-400 transition-all duration-200"
-                              style={{ width: `${editDevSplit}%` }}
-                            />
+                            <div className="bg-blue-400 transition-all duration-200" style={{ width: `${editPmSplit}%` }} />
+                            <div className="bg-emerald-400 transition-all duration-200" style={{ width: `${editDevSplit}%` }} />
                           </div>
                           <div className="flex items-center justify-between text-[10px] text-slate-400">
                             <span>PM {editPmSplit}%</span>
@@ -855,56 +925,16 @@ export default function ProjectsPage() {
 
                       <Separator />
 
-                      {/* Start Date */}
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Start Date</Label>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !editStartDate && "text-muted-foreground")}>
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              {editStartDate ? format(editStartDate, 'MMM d, yyyy') : 'Select date'}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar mode="single" selected={editStartDate} onSelect={setEditStartDate} />
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-
-                      {/* End Date */}
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">End Date</Label>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !editEndDate && "text-muted-foreground")}>
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              {editEndDate ? format(editEndDate, 'MMM d, yyyy') : 'Select date'}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <Calendar mode="single" selected={editEndDate} onSelect={setEditEndDate} />
-                          </PopoverContent>
-                        </Popover>
-                      </div>
-
-                      <Separator />
-
                       {/* Lead PM */}
                       <div className="space-y-1.5">
                         <Label className="text-xs text-slate-600">Lead PM</Label>
                         <Select value={editLeadPmId} onValueChange={setEditLeadPmId}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select PM" />
-                          </SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Select Lead PM" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">Unassigned</SelectItem>
-                            {teamMembers
-                              .filter((m) => m.department === 'PM')
-                              .map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.name}
-                                </SelectItem>
-                              ))}
+                            {teamMembers.filter(m => m.department === 'PM').map(m => (
+                              <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -913,18 +943,12 @@ export default function ProjectsPage() {
                       <div className="space-y-1.5">
                         <Label className="text-xs text-slate-600">Lead Dev</Label>
                         <Select value={editLeadDevId} onValueChange={setEditLeadDevId}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select Dev" />
-                          </SelectTrigger>
+                          <SelectTrigger><SelectValue placeholder="Select Lead Dev" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">Unassigned</SelectItem>
-                            {teamMembers
-                              .filter((m) => m.department === 'Dev')
-                              .map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.name}
-                                </SelectItem>
-                              ))}
+                            {teamMembers.filter(m => m.department === 'Dev').map(m => (
+                              <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -932,11 +956,7 @@ export default function ProjectsPage() {
                       {/* Notes */}
                       <div className="space-y-1.5">
                         <Label className="text-xs text-slate-600">Notes</Label>
-                        <Input
-                          value={editNotes}
-                          onChange={(e) => setEditNotes(e.target.value)}
-                          placeholder="Add notes..."
-                        />
+                        <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
                       </div>
                     </div>
                   </div>

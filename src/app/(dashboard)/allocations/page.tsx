@@ -243,11 +243,36 @@ function AddAllocationDialog({
                 <SelectValue placeholder="Select project" />
               </SelectTrigger>
               <SelectContent>
-                {projects.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.project_name} ({p.client_name})
-                  </SelectItem>
-                ))}
+                {projects.filter(p => p.category === 'retainer').length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Retainers</SelectLabel>
+                    {projects.filter(p => p.category === 'retainer').map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.project_name} ({p.client_name})
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {projects.filter(p => p.category === 'project').length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Projects</SelectLabel>
+                    {projects.filter(p => p.category === 'project').map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.project_name} ({p.client_name})
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {projects.filter(p => p.category === 'internal').length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Internal</SelectLabel>
+                    {projects.filter(p => p.category === 'internal').map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.project_name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -740,7 +765,7 @@ export default function AllocationsPage() {
                               {p.project_name} - {p.client_name}
                             </p>
                             <p className="text-muted-foreground">
-                              {p.status} | {p.project_type}
+                              {p.status} | {p.category === 'retainer' ? 'Retainer' : p.category === 'project' ? 'Project' : p.project_type}
                             </p>
                           </TooltipContent>
                         </Tooltip>

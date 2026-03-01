@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
   Users,
+  Building2,
   FolderKanban,
+  Hammer,
   CalendarDays,
   Calendar,
   BarChart3,
@@ -18,7 +20,9 @@ import { useRouter } from 'next/navigation'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Team', href: '/team', icon: Users },
-  { name: 'Projects', href: '/projects', icon: FolderKanban },
+  { name: 'Clients', href: '/clients', icon: Building2 },
+  { name: 'Retainers', href: '/retainers', icon: FolderKanban },
+  { name: 'Projects', href: '/projects', icon: Hammer },
   { name: 'Allocations', href: '/allocations', icon: CalendarDays },
   { name: 'Time Off', href: '/time-off', icon: Calendar },
   { name: 'Reports', href: '/reports', icon: BarChart3 },

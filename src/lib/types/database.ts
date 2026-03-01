@@ -12,6 +12,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      clients: {
+        Row: {
+          id: string
+          name: string
+          status: string | null
+          notes: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          status?: string | null
+          notes?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          status?: string | null
+          notes?: string | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
       holidays: {
         Row: {
           countries: string[] | null
@@ -47,6 +71,8 @@ export type Database = {
       }
       projects: {
         Row: {
+          category: string | null
+          client_id: string | null
           client_name: string
           created_at: string | null
           dev_split_pct: number | null
@@ -64,6 +90,8 @@ export type Database = {
           status: string | null
         }
         Insert: {
+          category?: string | null
+          client_id?: string | null
           client_name: string
           created_at?: string | null
           dev_split_pct?: number | null
@@ -81,6 +109,8 @@ export type Database = {
           status?: string | null
         }
         Update: {
+          category?: string | null
+          client_id?: string | null
           client_name?: string
           created_at?: string | null
           dev_split_pct?: number | null
@@ -98,6 +128,13 @@ export type Database = {
           status?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "projects_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "projects_lead_dev_id_fkey"
             columns: ["lead_dev_id"]
@@ -278,6 +315,7 @@ export type Database = {
   }
 }
 
+export type Client = Database['public']['Tables']['clients']['Row']
 export type TeamMember = Database['public']['Tables']['team_members']['Row']
 export type Project = Database['public']['Tables']['projects']['Row']
 export type WeeklyAllocation = Database['public']['Tables']['weekly_allocations']['Row']

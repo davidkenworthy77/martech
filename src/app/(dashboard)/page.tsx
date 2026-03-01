@@ -54,6 +54,7 @@ interface ProjectSummary {
   projectName: string
   clientName: string
   projectType: string
+  category: string | null
   totalHours: number
   status: string | null
 }
@@ -71,15 +72,24 @@ interface UpcomingPto {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PROJECT_TYPE_COLORS: Record<string, string> = {
-  'Full Website': 'bg-blue-100 text-blue-800',
-  'Service Agreement': 'bg-purple-100 text-purple-800',
-  'Banner/Email': 'bg-orange-100 text-orange-800',
-  'Internal': 'bg-gray-100 text-gray-700',
+const CATEGORY_COLORS: Record<string, string> = {
+  retainer: 'bg-purple-100 text-purple-800',
+  project: 'bg-blue-100 text-blue-800',
+  internal: 'bg-gray-100 text-gray-700',
 }
 
-function getProjectTypeBadgeClass(type: string): string {
-  return PROJECT_TYPE_COLORS[type] ?? 'bg-gray-100 text-gray-700'
+const CATEGORY_LABELS: Record<string, string> = {
+  retainer: 'Retainer',
+  project: 'Project',
+  internal: 'Internal',
+}
+
+function getCategoryBadgeClass(category: string | null): string {
+  return CATEGORY_COLORS[category ?? ''] ?? 'bg-gray-100 text-gray-700'
+}
+
+function getCategoryLabel(category: string | null): string {
+  return CATEGORY_LABELS[category ?? ''] ?? category ?? 'Unknown'
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +244,7 @@ export default function DashboardPage() {
           projectName: p.project_name,
           clientName: p.client_name,
           projectType: p.project_type,
+          category: p.category,
           totalHours,
           status: p.status,
         }
@@ -538,9 +549,9 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-3">
                       <Badge
                         variant="secondary"
-                        className={getProjectTypeBadgeClass(p.projectType)}
+                        className={getCategoryBadgeClass(p.category)}
                       >
-                        {p.projectType}
+                        {getCategoryLabel(p.category)}
                       </Badge>
                       <span className="min-w-[48px] text-right text-sm font-semibold tabular-nums">
                         {p.totalHours}h
