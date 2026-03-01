@@ -9,7 +9,6 @@ import {
   Building2,
   FolderKanban,
   Hammer,
-  CalendarDays,
   Calendar,
   BarChart3,
   LogOut,
@@ -23,7 +22,6 @@ const navigation = [
   { name: 'Clients', href: '/clients', icon: Building2 },
   { name: 'Retainers', href: '/retainers', icon: FolderKanban },
   { name: 'Projects', href: '/projects', icon: Hammer },
-  { name: 'Allocations', href: '/allocations', icon: CalendarDays },
   { name: 'Time Off', href: '/time-off', icon: Calendar },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]

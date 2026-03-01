@@ -75,7 +75,10 @@ export type Database = {
           client_id: string | null
           client_name: string
           created_at: string | null
+          design_split_pct: number | null
+          dev_end_date: string | null
           dev_split_pct: number | null
+          dev_start_date: string | null
           end_date: string | null
           id: string
           lead_dev_id: string | null
@@ -88,13 +91,17 @@ export type Database = {
           project_type: string
           start_date: string | null
           status: string | null
+          strategy_split_pct: number | null
         }
         Insert: {
           category?: string | null
           client_id?: string | null
           client_name: string
           created_at?: string | null
+          design_split_pct?: number | null
+          dev_end_date?: string | null
           dev_split_pct?: number | null
+          dev_start_date?: string | null
           end_date?: string | null
           id?: string
           lead_dev_id?: string | null
@@ -107,13 +114,17 @@ export type Database = {
           project_type: string
           start_date?: string | null
           status?: string | null
+          strategy_split_pct?: number | null
         }
         Update: {
           category?: string | null
           client_id?: string | null
           client_name?: string
           created_at?: string | null
+          design_split_pct?: number | null
+          dev_end_date?: string | null
           dev_split_pct?: number | null
+          dev_start_date?: string | null
           end_date?: string | null
           id?: string
           lead_dev_id?: string | null
@@ -126,6 +137,7 @@ export type Database = {
           project_type?: string
           start_date?: string | null
           status?: string | null
+          strategy_split_pct?: number | null
         }
         Relationships: [
           {

@@ -1,5 +1,5 @@
-import { startOfWeek, endOfWeek, eachDayOfInterval, isWeekend, format, parseISO, addDays } from 'date-fns'
-import type { TeamMember, Holiday, TimeOff } from '@/lib/types/database'
+import { startOfWeek, endOfWeek, eachDayOfInterval, isWeekend, format, parseISO, addDays, differenceInCalendarDays } from 'date-fns'
+import type { TeamMember, Holiday, TimeOff, Project } from '@/lib/types/database'
 
 // Map member location to holiday country code
 function locationToCountry(location: string): string {
@@ -121,4 +121,74 @@ export function navigateWeek(weekStarting: string, direction: number): string {
   const start = parseISO(weekStarting)
   const newStart = addDays(start, direction * 7)
   return format(newStart, 'yyyy-MM-dd')
+}
+
+// ---------------------------------------------------------------------------
+// Assignment-based utilization (replaces weekly_allocations)
+// ---------------------------------------------------------------------------
+
+const WEEKS_PER_MONTH = 4.33
+
+/**
+ * Calculate the total hours assigned to a team member for a given week,
+ * derived from retainer/project PM and Dev assignments.
+ */
+export function getAssignedHoursForWeek(
+  memberId: string,
+  weekStarting: string,
+  allProjects: Project[]
+): number {
+  let totalHours = 0
+  const weekStart = parseISO(weekStarting)
+  const weekEnd = addDays(weekStart, 6)
+
+  for (const project of allProjects) {
+    if (project.status !== 'Active') continue
+
+    const isAssignedPm = project.lead_pm_id === memberId
+    const isAssignedDev = project.lead_dev_id === memberId
+
+    if (!isAssignedPm && !isAssignedDev) continue
+
+    if (project.category === 'retainer' || project.category === 'internal') {
+      // Retainers & internal: monthly hours spread evenly across weeks
+      const monthlyTotal = project.monthly_hours_total ?? 0
+      if (isAssignedPm) {
+        totalHours += (monthlyTotal * (project.pm_split_pct ?? 0) / 100) / WEEKS_PER_MONTH
+      }
+      if (isAssignedDev) {
+        totalHours += (monthlyTotal * (project.dev_split_pct ?? 0) / 100) / WEEKS_PER_MONTH
+      }
+    } else if (project.category === 'project') {
+      // Projects: total hours spread across relevant timeline per role
+      if (!project.start_date || !project.end_date) continue
+
+      const projectStart = parseISO(project.start_date)
+      const projectEnd = parseISO(project.end_date)
+      const totalProjectHours = project.monthly_hours_total ?? 0
+
+      // PM: spread across full project timeline
+      if (isAssignedPm) {
+        if (weekStart <= projectEnd && weekEnd >= projectStart) {
+          const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
+          const pmWeeks = Math.max(1, pmDays / 7)
+          totalHours += (totalProjectHours * (project.pm_split_pct ?? 0) / 100) / pmWeeks
+        }
+      }
+
+      // Dev: spread across dev date range (falls back to project dates if not set)
+      if (isAssignedDev) {
+        const devStart = project.dev_start_date ? parseISO(project.dev_start_date) : projectStart
+        const devEnd = project.dev_end_date ? parseISO(project.dev_end_date) : projectEnd
+
+        if (weekStart <= devEnd && weekEnd >= devStart) {
+          const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
+          const devWeeks = Math.max(1, devDays / 7)
+          totalHours += (totalProjectHours * (project.dev_split_pct ?? 0) / 100) / devWeeks
+        }
+      }
+    }
+  }
+
+  return Math.round(totalHours * 10) / 10
 }

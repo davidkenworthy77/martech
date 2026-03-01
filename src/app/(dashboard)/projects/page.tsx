@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Project, TeamMember, WeeklyAllocation, Client } from '@/lib/types/database'
+import type { Project, TeamMember, Client } from '@/lib/types/database'
 import {
   Table,
   TableBody,
@@ -16,7 +16,6 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -37,8 +36,6 @@ import { Calendar } from '@/components/ui/calendar'
 import {
   Hammer,
   Loader2,
-  Users,
-  Clock,
   Save,
   Search,
   Pencil,
@@ -55,10 +52,6 @@ import { cn } from '@/lib/utils'
 type ProjectWithLeads = Project & {
   lead_pm?: TeamMember | null
   lead_dev?: TeamMember | null
-}
-
-type AllocationWithMember = WeeklyAllocation & {
-  team_member?: TeamMember | null
 }
 
 const STATUSES = ['All', 'Planning', 'Active', 'On Hold', 'Complete'] as const
@@ -116,12 +109,11 @@ export default function ProjectsPage() {
   // Detail sheet state
   const [selectedProject, setSelectedProject] = useState<ProjectWithLeads | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [allocations, setAllocations] = useState<AllocationWithMember[]>([])
-  const [allocationsLoading, setAllocationsLoading] = useState(false)
-
-  // PM/Dev split editing
+  // PM/Dev/Design/Strategy split editing
   const [editPmSplit, setEditPmSplit] = useState<number>(0)
   const [editDevSplit, setEditDevSplit] = useState<number>(0)
+  const [editDesignSplit, setEditDesignSplit] = useState<number>(0)
+  const [editStrategySplit, setEditStrategySplit] = useState<number>(0)
   const [saving, setSaving] = useState(false)
 
   // Edit mode
@@ -134,6 +126,8 @@ export default function ProjectsPage() {
   const [editLeadDevId, setEditLeadDevId] = useState<string>('')
   const [editStartDate, setEditStartDate] = useState<Date | undefined>(undefined)
   const [editEndDate, setEditEndDate] = useState<Date | undefined>(undefined)
+  const [editDevStartDate, setEditDevStartDate] = useState<Date | undefined>(undefined)
+  const [editDevEndDate, setEditDevEndDate] = useState<Date | undefined>(undefined)
   const [editNotes, setEditNotes] = useState('')
 
   // -------------------------------------------------------------------------
@@ -178,23 +172,6 @@ export default function ProjectsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchAllocations = useCallback(
-    async (projectId: string) => {
-      setAllocationsLoading(true)
-      const { data } = await supabase
-        .from('weekly_allocations')
-        .select('*, team_member:team_members!weekly_allocations_team_member_id_fkey(*)')
-        .eq('project_id', projectId)
-        .order('week_starting', { ascending: true })
-
-      if (data) {
-        setAllocations(data as unknown as AllocationWithMember[])
-      }
-      setAllocationsLoading(false)
-    },
-    [supabase]
-  )
-
   // -------------------------------------------------------------------------
   // Handlers
   // -------------------------------------------------------------------------
@@ -203,6 +180,8 @@ export default function ProjectsPage() {
     setSelectedProject(project)
     setEditPmSplit(project.pm_split_pct ?? 50)
     setEditDevSplit(project.dev_split_pct ?? 50)
+    setEditDesignSplit(project.design_split_pct ?? 0)
+    setEditStrategySplit(project.strategy_split_pct ?? 0)
     setEditName(project.project_name)
     setEditClientId(project.client_id ?? 'none')
     setEditStatus(project.status ?? 'Active')
@@ -211,10 +190,11 @@ export default function ProjectsPage() {
     setEditLeadDevId(project.lead_dev_id ?? 'none')
     setEditStartDate(project.start_date ? parseISO(project.start_date) : undefined)
     setEditEndDate(project.end_date ? parseISO(project.end_date) : undefined)
+    setEditDevStartDate(project.dev_start_date ? parseISO(project.dev_start_date) : undefined)
+    setEditDevEndDate(project.dev_end_date ? parseISO(project.dev_end_date) : undefined)
     setEditNotes(project.notes ?? '')
     setEditing(false)
     setSheetOpen(true)
-    fetchAllocations(project.id)
   }
 
   const handleSave = async () => {
@@ -230,10 +210,14 @@ export default function ProjectsPage() {
       monthly_hours_total: editTotalHours,
       pm_split_pct: editPmSplit,
       dev_split_pct: editDevSplit,
+      design_split_pct: editDesignSplit,
+      strategy_split_pct: editStrategySplit,
       lead_pm_id: editLeadPmId === 'none' ? null : editLeadPmId,
       lead_dev_id: editLeadDevId === 'none' ? null : editLeadDevId,
       start_date: editStartDate ? format(editStartDate, 'yyyy-MM-dd') : null,
       end_date: editEndDate ? format(editEndDate, 'yyyy-MM-dd') : null,
+      dev_start_date: editDevStartDate ? format(editDevStartDate, 'yyyy-MM-dd') : null,
+      dev_end_date: editDevEndDate ? format(editDevEndDate, 'yyyy-MM-dd') : null,
       notes: editNotes || null,
     }
 
@@ -282,30 +266,6 @@ export default function ProjectsPage() {
     })
   }, [projects, statusFilter, searchQuery])
 
-  // Aggregate allocations by team member for the detail sheet
-  const allocationsByMember = useMemo(() => {
-    const map = new Map<
-      string,
-      { member: TeamMember; totalHours: number; role: string | null; weeks: number }
-    >()
-    for (const a of allocations) {
-      if (!a.team_member) continue
-      const existing = map.get(a.team_member_id)
-      if (existing) {
-        existing.totalHours += a.hours_allocated
-        existing.weeks += 1
-      } else {
-        map.set(a.team_member_id, {
-          member: a.team_member,
-          totalHours: a.hours_allocated,
-          role: a.role_on_project,
-          weeks: 1,
-        })
-      }
-    }
-    return Array.from(map.values()).sort((a, b) => b.totalHours - a.totalHours)
-  }, [allocations])
-
   // -------------------------------------------------------------------------
   // Calculated hours
   // -------------------------------------------------------------------------
@@ -319,6 +279,18 @@ export default function ProjectsPage() {
   const calcDevHours = (project: ProjectWithLeads) => {
     const total = project.monthly_hours_total ?? 0
     const pct = project.dev_split_pct ?? 0
+    return Math.round((total * pct) / 100)
+  }
+
+  const calcDesignHours = (project: ProjectWithLeads) => {
+    const total = project.monthly_hours_total ?? 0
+    const pct = project.design_split_pct ?? 0
+    return Math.round((total * pct) / 100)
+  }
+
+  const calcStrategyHours = (project: ProjectWithLeads) => {
+    const total = project.monthly_hours_total ?? 0
+    const pct = project.strategy_split_pct ?? 0
     return Math.round((total * pct) / 100)
   }
 
@@ -410,10 +382,12 @@ export default function ProjectsPage() {
                   <TableHead className="text-right">Total Hrs</TableHead>
                   <TableHead className="text-right">PM Hrs</TableHead>
                   <TableHead className="text-right">Dev Hrs</TableHead>
+                  <TableHead className="text-right">Design Hrs</TableHead>
+                  <TableHead className="text-right">Strategy Hrs</TableHead>
                   <TableHead>Start Date</TableHead>
                   <TableHead>End Date</TableHead>
-                  <TableHead>Lead PM</TableHead>
-                  <TableHead>Lead Dev</TableHead>
+                  <TableHead>PM</TableHead>
+                  <TableHead>Dev</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -453,6 +427,18 @@ export default function ProjectsPage() {
                       {calcDevHours(project)}
                       <span className="text-slate-400 text-xs ml-1">
                         ({project.dev_split_pct ?? 0}%)
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-600">
+                      {calcDesignHours(project)}
+                      <span className="text-slate-400 text-xs ml-1">
+                        ({project.design_split_pct ?? 0}%)
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-slate-600">
+                      {calcStrategyHours(project)}
+                      <span className="text-slate-400 text-xs ml-1">
+                        ({project.strategy_split_pct ?? 0}%)
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-slate-600">
@@ -502,34 +488,47 @@ export default function ProjectsPage() {
                     <SheetDescription>{selectedProject.client_name}</SheetDescription>
                   </SheetHeader>
 
-                  <ScrollArea className="flex-1 px-4">
+                  <div className="flex-1 min-h-0 overflow-y-auto px-4">
                     <div className="space-y-6 pb-6">
                       {/* Hours summary */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900 mb-3">
                           Total Hours Breakdown
                         </h4>
-                        <div className="grid grid-cols-3 gap-3">
-                          <div className="rounded-lg border bg-slate-50 p-3 text-center">
-                            <p className="text-xs text-slate-500">Total</p>
-                            <p className="text-xl font-bold text-slate-900 tabular-nums">
-                              {selectedProject.monthly_hours_total ?? 0}
-                            </p>
-                            <p className="text-[10px] text-slate-400">hrs total</p>
-                          </div>
-                          <div className="rounded-lg border bg-blue-50/50 p-3 text-center">
-                            <p className="text-xs text-blue-600">PM Hours</p>
-                            <p className="text-xl font-bold text-blue-700 tabular-nums">
+                        <div className="rounded-lg border bg-slate-50 p-3 text-center mb-3">
+                          <p className="text-xs text-slate-500">Total Project Hours</p>
+                          <p className="text-2xl font-bold text-slate-900 tabular-nums">
+                            {selectedProject.monthly_hours_total ?? 0}
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="rounded-lg border bg-blue-50/50 p-2.5 text-center">
+                            <p className="text-[10px] text-blue-600">PM</p>
+                            <p className="text-lg font-bold text-blue-700 tabular-nums">
                               {calcPmHours(selectedProject)}
                             </p>
                             <p className="text-[10px] text-blue-400">{selectedProject.pm_split_pct ?? 0}%</p>
                           </div>
-                          <div className="rounded-lg border bg-emerald-50/50 p-3 text-center">
-                            <p className="text-xs text-emerald-600">Dev Hours</p>
-                            <p className="text-xl font-bold text-emerald-700 tabular-nums">
+                          <div className="rounded-lg border bg-emerald-50/50 p-2.5 text-center">
+                            <p className="text-[10px] text-emerald-600">Dev</p>
+                            <p className="text-lg font-bold text-emerald-700 tabular-nums">
                               {calcDevHours(selectedProject)}
                             </p>
                             <p className="text-[10px] text-emerald-400">{selectedProject.dev_split_pct ?? 0}%</p>
+                          </div>
+                          <div className="rounded-lg border bg-purple-50/50 p-2.5 text-center">
+                            <p className="text-[10px] text-purple-600">Design</p>
+                            <p className="text-lg font-bold text-purple-700 tabular-nums">
+                              {calcDesignHours(selectedProject)}
+                            </p>
+                            <p className="text-[10px] text-purple-400">{selectedProject.design_split_pct ?? 0}%</p>
+                          </div>
+                          <div className="rounded-lg border bg-amber-50/50 p-2.5 text-center">
+                            <p className="text-[10px] text-amber-600">Strategy</p>
+                            <p className="text-lg font-bold text-amber-700 tabular-nums">
+                              {calcStrategyHours(selectedProject)}
+                            </p>
+                            <p className="text-[10px] text-amber-400">{selectedProject.strategy_split_pct ?? 0}%</p>
                           </div>
                         </div>
                       </div>
@@ -544,7 +543,7 @@ export default function ProjectsPage() {
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Start Date
+                              Project Start
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {formatDate(selectedProject.start_date)}
@@ -552,21 +551,40 @@ export default function ProjectsPage() {
                           </div>
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              End Date
+                              Project End
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {formatDate(selectedProject.end_date)}
                             </p>
                           </div>
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3">
+                            <p className="text-[10px] uppercase tracking-wider text-emerald-500 mb-1">
+                              Dev Start
+                            </p>
+                            <p className="text-sm font-medium text-slate-900">
+                              {formatDate(selectedProject.dev_start_date)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 p-3">
+                            <p className="text-[10px] uppercase tracking-wider text-emerald-500 mb-1">
+                              Dev End
+                            </p>
+                            <p className="text-sm font-medium text-slate-900">
+                              {formatDate(selectedProject.dev_end_date)}
+                            </p>
+                          </div>
                         </div>
+                        <p className="text-[10px] text-slate-400 mt-2">
+                          PM hours spread across full project. Dev hours only during dev dates.
+                        </p>
                       </div>
 
                       <Separator />
 
-                      {/* PM/Dev Split - read-only */}
+                      {/* Hours Split - read-only */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          PM / Dev Split
+                          Hours Split
                         </h4>
                         <div className="space-y-2">
                           <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden flex">
@@ -578,10 +596,20 @@ export default function ProjectsPage() {
                               className="bg-emerald-400 transition-all duration-200"
                               style={{ width: `${selectedProject.dev_split_pct ?? 0}%` }}
                             />
+                            <div
+                              className="bg-purple-400 transition-all duration-200"
+                              style={{ width: `${selectedProject.design_split_pct ?? 0}%` }}
+                            />
+                            <div
+                              className="bg-amber-400 transition-all duration-200"
+                              style={{ width: `${selectedProject.strategy_split_pct ?? 0}%` }}
+                            />
                           </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span>PM {selectedProject.pm_split_pct ?? 0}%</span>
-                            <span>Dev {selectedProject.dev_split_pct ?? 0}%</span>
+                          <div className="flex items-center gap-3 text-[10px]">
+                            <span className="text-blue-500">PM {selectedProject.pm_split_pct ?? 0}%</span>
+                            <span className="text-emerald-500">Dev {selectedProject.dev_split_pct ?? 0}%</span>
+                            <span className="text-purple-500">Design {selectedProject.design_split_pct ?? 0}%</span>
+                            <span className="text-amber-500">Strategy {selectedProject.strategy_split_pct ?? 0}%</span>
                           </div>
                         </div>
                       </div>
@@ -591,12 +619,12 @@ export default function ProjectsPage() {
                       {/* Leads */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          Project Leads
+                          Assigned Team
                         </h4>
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Lead PM
+                              PM
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {selectedProject.lead_pm?.name ?? 'Unassigned'}
@@ -609,7 +637,7 @@ export default function ProjectsPage() {
                           </div>
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Lead Dev
+                              Dev
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {selectedProject.lead_dev?.name ?? 'Unassigned'}
@@ -621,84 +649,6 @@ export default function ProjectsPage() {
                             )}
                           </div>
                         </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* Team allocations */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-3">
-                          <Users className="h-4 w-4 text-slate-500" />
-                          <h4 className="text-sm font-semibold text-slate-900">
-                            Team Allocations
-                          </h4>
-                        </div>
-
-                        {allocationsLoading && (
-                          <div className="flex items-center justify-center py-8">
-                            <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
-                            <span className="ml-2 text-sm text-slate-400">
-                              Loading allocations...
-                            </span>
-                          </div>
-                        )}
-
-                        {!allocationsLoading && allocationsByMember.length === 0 && (
-                          <div className="rounded-lg border border-dashed bg-slate-50/50 p-6 text-center">
-                            <Clock className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                            <p className="text-sm text-slate-400">
-                              No team members allocated yet
-                            </p>
-                          </div>
-                        )}
-
-                        {!allocationsLoading && allocationsByMember.length > 0 && (
-                          <div className="space-y-2">
-                            {allocationsByMember.map(({ member, totalHours, role, weeks }) => (
-                              <div
-                                key={member.id}
-                                className="flex items-center justify-between rounded-lg border p-3 hover:bg-slate-50 transition-colors"
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-slate-900 truncate">
-                                    {member.name}
-                                  </p>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-xs text-slate-500">
-                                      {member.role}
-                                    </span>
-                                    {role && (
-                                      <>
-                                        <span className="text-slate-300">&#183;</span>
-                                        <span className="text-xs text-slate-400">
-                                          {role}
-                                        </span>
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                                <div className="text-right ml-3">
-                                  <p className="text-sm font-semibold text-slate-900 tabular-nums">
-                                    {totalHours}h
-                                  </p>
-                                  <p className="text-[10px] text-slate-400">
-                                    {weeks} week{weeks !== 1 ? 's' : ''}
-                                  </p>
-                                </div>
-                              </div>
-                            ))}
-
-                            {/* Total row */}
-                            <div className="flex items-center justify-between rounded-lg bg-slate-100 p-3 mt-1">
-                              <p className="text-sm font-semibold text-slate-700">
-                                Total allocated
-                              </p>
-                              <p className="text-sm font-bold text-slate-900 tabular-nums">
-                                {allocationsByMember.reduce((sum, a) => sum + a.totalHours, 0)}h
-                              </p>
-                            </div>
-                          </div>
-                        )}
                       </div>
 
                       {/* Notes */}
@@ -716,7 +666,7 @@ export default function ProjectsPage() {
                         </>
                       )}
                     </div>
-                  </ScrollArea>
+                  </div>
                 </>
               ) : (
                 <>
@@ -738,7 +688,7 @@ export default function ProjectsPage() {
                     <SheetDescription>Edit project details below</SheetDescription>
                   </SheetHeader>
 
-                  <div className="flex-1 overflow-y-auto px-4">
+                  <div className="flex-1 min-h-0 overflow-y-auto px-4">
                     <div className="space-y-6 pb-6">
                       {/* Project Name */}
                       <div className="space-y-1.5">
@@ -792,63 +742,64 @@ export default function ProjectsPage() {
 
                       <Separator />
 
-                      {/* PM / Dev Split */}
+                      {/* Hours Split */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-900 mb-3">
-                          PM / Dev Split
+                          Hours Split
                         </h4>
                         <div className="space-y-4">
-                          <div className="flex items-center gap-4">
-                            <div className="flex-1 space-y-1.5">
-                              <Label htmlFor="pm-split" className="text-xs text-slate-600">
-                                PM Split (%)
-                              </Label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-blue-600">PM (%)</Label>
                               <Input
-                                id="pm-split"
-                                type="number"
-                                min={0}
-                                max={100}
+                                type="number" min={0} max={100}
                                 value={editPmSplit}
-                                onChange={(e) => {
-                                  const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
-                                  setEditPmSplit(val)
-                                  setEditDevSplit(100 - val)
-                                }}
+                                onChange={(e) => setEditPmSplit(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                               />
                             </div>
-                            <div className="flex-1 space-y-1.5">
-                              <Label htmlFor="dev-split" className="text-xs text-slate-600">
-                                Dev Split (%)
-                              </Label>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-emerald-600">Dev (%)</Label>
                               <Input
-                                id="dev-split"
-                                type="number"
-                                min={0}
-                                max={100}
+                                type="number" min={0} max={100}
                                 value={editDevSplit}
-                                onChange={(e) => {
-                                  const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0))
-                                  setEditDevSplit(val)
-                                  setEditPmSplit(100 - val)
-                                }}
+                                onChange={(e) => setEditDevSplit(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-purple-600">Design (%)</Label>
+                              <Input
+                                type="number" min={0} max={100}
+                                value={editDesignSplit}
+                                onChange={(e) => setEditDesignSplit(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-amber-600">Strategy (%)</Label>
+                              <Input
+                                type="number" min={0} max={100}
+                                value={editStrategySplit}
+                                onChange={(e) => setEditStrategySplit(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                               />
                             </div>
                           </div>
 
                           {/* Split visual bar */}
                           <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden flex">
-                            <div
-                              className="bg-blue-400 transition-all duration-200"
-                              style={{ width: `${editPmSplit}%` }}
-                            />
-                            <div
-                              className="bg-emerald-400 transition-all duration-200"
-                              style={{ width: `${editDevSplit}%` }}
-                            />
+                            <div className="bg-blue-400 transition-all duration-200" style={{ width: `${editPmSplit}%` }} />
+                            <div className="bg-emerald-400 transition-all duration-200" style={{ width: `${editDevSplit}%` }} />
+                            <div className="bg-purple-400 transition-all duration-200" style={{ width: `${editDesignSplit}%` }} />
+                            <div className="bg-amber-400 transition-all duration-200" style={{ width: `${editStrategySplit}%` }} />
                           </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span>PM {editPmSplit}%</span>
-                            <span>Dev {editDevSplit}%</span>
+                          <div className="flex items-center justify-between text-[10px]">
+                            <div className="flex items-center gap-3">
+                              <span className="text-blue-500">PM {editPmSplit}%</span>
+                              <span className="text-emerald-500">Dev {editDevSplit}%</span>
+                              <span className="text-purple-500">Design {editDesignSplit}%</span>
+                              <span className="text-amber-500">Strategy {editStrategySplit}%</span>
+                            </div>
+                            <span className={`font-medium ${editPmSplit + editDevSplit + editDesignSplit + editStrategySplit === 100 ? 'text-green-600' : 'text-red-500'}`}>
+                              {editPmSplit + editDevSplit + editDesignSplit + editStrategySplit}%
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -889,9 +840,49 @@ export default function ProjectsPage() {
 
                       <Separator />
 
-                      {/* Lead PM */}
+                      {/* Dev Timeline */}
+                      <div>
+                        <h4 className="text-sm font-semibold text-emerald-700 mb-1">Dev Timeline</h4>
+                        <p className="text-[10px] text-slate-400 mb-3">
+                          Dev hours are only allocated during this window. Defaults to full project if not set.
+                        </p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-emerald-600">Dev Start Date</Label>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !editDevStartDate && "text-muted-foreground")}>
+                                  <CalendarIcon className="mr-2 h-4 w-4" />
+                                  {editDevStartDate ? format(editDevStartDate, 'MMM d, yyyy') : 'Not set'}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar mode="single" selected={editDevStartDate} onSelect={setEditDevStartDate} />
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-emerald-600">Dev End Date</Label>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !editDevEndDate && "text-muted-foreground")}>
+                                  <CalendarIcon className="mr-2 h-4 w-4" />
+                                  {editDevEndDate ? format(editDevEndDate, 'MMM d, yyyy') : 'Not set'}
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-auto p-0" align="start">
+                                <Calendar mode="single" selected={editDevEndDate} onSelect={setEditDevEndDate} />
+                              </PopoverContent>
+                            </Popover>
+                          </div>
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      {/* PM */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Lead PM</Label>
+                        <Label className="text-xs text-slate-600">PM</Label>
                         <Select value={editLeadPmId} onValueChange={setEditLeadPmId}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select PM" />
@@ -909,9 +900,9 @@ export default function ProjectsPage() {
                         </Select>
                       </div>
 
-                      {/* Lead Dev */}
+                      {/* Dev */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Lead Dev</Label>
+                        <Label className="text-xs text-slate-600">Dev</Label>
                         <Select value={editLeadDevId} onValueChange={setEditLeadDevId}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select Dev" />

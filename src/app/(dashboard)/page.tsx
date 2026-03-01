@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { TeamMember, Project, WeeklyAllocation, TimeOff, Holiday } from '@/lib/types/database'
+import type { TeamMember, Project, TimeOff, Holiday } from '@/lib/types/database'
 import {
   getCurrentWeekStart,
   getAvailableHours,
   getUtilizationPercent,
   getUtilizationColor,
   getUtilizationBgColor,
+  getAssignedHoursForWeek,
 } from '@/lib/capacity'
 import { WeekPicker } from '@/components/week-picker'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -129,7 +130,7 @@ export default function DashboardPage() {
   const [weekStarting, setWeekStarting] = useState(getCurrentWeekStart)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [allocations, setAllocations] = useState<WeeklyAllocation[]>([])
+  const [allProjects, setAllProjects] = useState<Project[]>([])
   const [timeOff, setTimeOff] = useState<TimeOff[]>([])
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [loading, setLoading] = useState(true)
@@ -144,8 +145,8 @@ export default function DashboardPage() {
 
     const [
       { data: members },
-      { data: projectsData },
-      { data: allocData },
+      { data: activeProjectsData },
+      { data: allProjectsData },
       { data: timeOffData },
       { data: holidayData },
     ] = await Promise.all([
@@ -160,9 +161,8 @@ export default function DashboardPage() {
         .eq('status', 'Active')
         .order('project_name'),
       supabase
-        .from('weekly_allocations')
-        .select('*')
-        .eq('week_starting', weekStarting),
+        .from('projects')
+        .select('*'),
       supabase
         .from('time_off')
         .select('*')
@@ -171,8 +171,8 @@ export default function DashboardPage() {
     ])
 
     setTeamMembers(members ?? [])
-    setProjects(projectsData ?? [])
-    setAllocations(allocData ?? [])
+    setProjects(activeProjectsData ?? [])
+    setAllProjects(allProjectsData ?? [])
     setTimeOff(timeOffData ?? [])
     setHolidays(holidayData ?? [])
     setLoading(false)
@@ -189,9 +189,7 @@ export default function DashboardPage() {
   const memberUtilizations: MemberUtilization[] = useMemo(() => {
     return teamMembers.map((m) => {
       const available = getAvailableHours(m, weekStarting, holidays, timeOff)
-      const allocated = allocations
-        .filter((a) => a.team_member_id === m.id)
-        .reduce((sum, a) => sum + a.hours_allocated, 0)
+      const allocated = getAssignedHoursForWeek(m.id, weekStarting, allProjects)
       const utilization = getUtilizationPercent(allocated, available)
       return {
         id: m.id,
@@ -202,7 +200,7 @@ export default function DashboardPage() {
         utilization,
       }
     })
-  }, [teamMembers, allocations, weekStarting, holidays, timeOff])
+  }, [teamMembers, allProjects, weekStarting, holidays, timeOff])
 
   const departmentStats = useMemo(() => {
     const pm = memberUtilizations.filter((m) => m.department === 'PM')
@@ -236,22 +234,27 @@ export default function DashboardPage() {
   const projectSummaries: ProjectSummary[] = useMemo(() => {
     return projects
       .map((p) => {
-        const totalHours = allocations
-          .filter((a) => a.project_id === p.id)
-          .reduce((s, a) => s + a.hours_allocated, 0)
+        // Sum up assigned hours for all team members on this project this week
+        let totalHours = 0
+        for (const m of teamMembers) {
+          if (p.lead_pm_id === m.id || p.lead_dev_id === m.id) {
+            const hrs = getAssignedHoursForWeek(m.id, weekStarting, [p])
+            totalHours += hrs
+          }
+        }
         return {
           id: p.id,
           projectName: p.project_name,
           clientName: p.client_name,
           projectType: p.project_type,
           category: p.category,
-          totalHours,
+          totalHours: Math.round(totalHours * 10) / 10,
           status: p.status,
         }
       })
       .filter((p) => p.totalHours > 0)
       .sort((a, b) => b.totalHours - a.totalHours)
-  }, [projects, allocations])
+  }, [projects, teamMembers, weekStarting])
 
   const upcomingPto: UpcomingPto[] = useMemo(() => {
     const today = new Date()
@@ -332,7 +335,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Main content: chart + alerts */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-3 items-start">
         {/* Team Utilization Bar Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -460,7 +463,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <ScrollArea className="max-h-[400px]">
+            <div className="max-h-[400px] overflow-y-auto">
               <div className="space-y-3">
                 {alerts.overloaded.length === 0 &&
                   alerts.underutilized.length === 0 && (
@@ -508,7 +511,7 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </CardContent>
         </Card>
       </div>

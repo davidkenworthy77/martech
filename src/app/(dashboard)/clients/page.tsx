@@ -430,7 +430,7 @@ function ViewModePanel({
         </div>
       </SheetHeader>
 
-      <div className="flex-1 overflow-y-auto px-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4">
         <div className="flex flex-col gap-5 pb-6">
           {/* Notes */}
           {client.notes && (
@@ -604,7 +604,7 @@ function EditModePanel({
         </SheetDescription>
       </SheetHeader>
 
-      <div className="flex-1 overflow-y-auto px-4">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4">
         <div className="flex flex-col gap-5 pb-6">
           {/* Name */}
           <div>
