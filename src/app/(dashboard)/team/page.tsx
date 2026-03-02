@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { TeamMember, WeeklyAllocation, Project, Holiday, TimeOff } from '@/lib/types/database'
+import type { TeamMember, Project, Holiday, TimeOff } from '@/lib/types/database'
 import {
   getAvailableHours,
   getUtilizationPercent,
@@ -11,6 +11,8 @@ import {
   getWeekLabel,
   getHolidayHoursForWeek,
   getPtoHoursForWeek,
+  getAssignedHoursForWeek,
+  getAssignedHoursBreakdown,
 } from '@/lib/capacity'
 
 import {
@@ -131,14 +133,6 @@ function locationBadge(location: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Types for joined data
-// ---------------------------------------------------------------------------
-
-type AllocationWithProject = WeeklyAllocation & {
-  project: Project | null
-}
-
-// ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
 
@@ -148,7 +142,6 @@ export default function TeamPage() {
 
   // ---- Data state ----
   const [members, setMembers] = useState<TeamMember[]>([])
-  const [allocations, setAllocations] = useState<AllocationWithProject[]>([])
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [timeOff, setTimeOff] = useState<TimeOff[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -189,17 +182,13 @@ export default function TeamPage() {
   // ---- Fetch all data ----
   const fetchData = useCallback(async () => {
     setLoading(true)
-    const [membersRes, allocationsRes, holidaysRes, timeOffRes, projectsRes] =
+    const [membersRes, holidaysRes, timeOffRes, projectsRes] =
       await Promise.all([
         supabase
           .from('team_members')
           .select('*')
           .eq('is_active', true)
           .order('name'),
-        supabase
-          .from('weekly_allocations')
-          .select('*')
-          .eq('week_starting', weekStarting),
         supabase.from('holidays').select('*'),
         supabase.from('time_off').select('*').eq('status', 'Approved'),
         supabase.from('projects').select('*'),
@@ -209,15 +198,6 @@ export default function TeamPage() {
     if (holidaysRes.data) setHolidays(holidaysRes.data)
     if (timeOffRes.data) setTimeOff(timeOffRes.data)
     if (projectsRes.data) setProjects(projectsRes.data)
-
-    if (allocationsRes.data && projectsRes.data) {
-      const joined: AllocationWithProject[] = allocationsRes.data.map((a) => ({
-        ...a,
-        project:
-          projectsRes.data.find((p) => p.id === a.project_id) ?? null,
-      }))
-      setAllocations(joined)
-    }
 
     setLoading(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,17 +236,6 @@ export default function TeamPage() {
 
     return filtered
   }, [members, departmentFilter, searchQuery])
-
-  function getMemberAllocations(memberId: string): AllocationWithProject[] {
-    return allocations.filter((a) => a.team_member_id === memberId)
-  }
-
-  function getTotalAllocated(memberId: string): number {
-    return getMemberAllocations(memberId).reduce(
-      (sum, a) => sum + a.hours_allocated,
-      0
-    )
-  }
 
   // ---- Sheet handlers ----
   function openMemberSheet(member: TeamMember) {
@@ -486,7 +455,7 @@ export default function TeamPage() {
                   holidays,
                   timeOff
                 )
-                const allocated = getTotalAllocated(member.id)
+                const allocated = getAssignedHoursForWeek(member.id, weekStarting, projects)
                 const utilization = getUtilizationPercent(allocated, available)
                 const utilizationStyle = getUtilizationColor(utilization)
                 const manager = member.reports_to
@@ -579,7 +548,7 @@ export default function TeamPage() {
             <MemberDetailPanel
               member={selectedMember}
               membersMap={membersMap}
-              allocations={getMemberAllocations(selectedMember.id)}
+              projects={projects}
               holidays={holidays}
               timeOff={timeOff}
               weekStarting={weekStarting}
@@ -780,7 +749,7 @@ export default function TeamPage() {
 function MemberDetailPanel({
   member,
   membersMap,
-  allocations,
+  projects,
   holidays,
   timeOff,
   weekStarting,
@@ -809,7 +778,7 @@ function MemberDetailPanel({
 }: {
   member: TeamMember
   membersMap: Map<string, TeamMember>
-  allocations: AllocationWithProject[]
+  projects: Project[]
   holidays: Holiday[]
   timeOff: TimeOff[]
   weekStarting: string
@@ -841,11 +810,11 @@ function MemberDetailPanel({
   const holidayHours = getHolidayHoursForWeek(member, weekStarting, holidays)
   const ptoHours = getPtoHoursForWeek(member, weekStarting, timeOff)
   const available = getAvailableHours(member, weekStarting, holidays, timeOff)
-  const totalAllocated = allocations.reduce(
-    (sum, a) => sum + a.hours_allocated,
-    0
-  )
+  const totalAllocated = getAssignedHoursForWeek(member.id, weekStarting, projects)
   const utilization = getUtilizationPercent(totalAllocated, available)
+
+  // Per-project breakdown for this member this week
+  const breakdown = getAssignedHoursBreakdown(member.id, weekStarting, projects)
   const utilizationStyle = getUtilizationColor(utilization)
   const manager = member.reports_to
     ? membersMap.get(member.reports_to)
@@ -1221,46 +1190,39 @@ function MemberDetailPanel({
 
           <Separator />
 
-          {/* Allocations for this week */}
+          {/* Assignments for this week */}
           <section>
             <h3 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-2">
               <Briefcase className="h-4 w-4 text-slate-500" />
-              Allocations &mdash; {getWeekLabel(weekStarting)}
+              Assignments &mdash; {getWeekLabel(weekStarting)}
             </h3>
 
-            {allocations.length === 0 ? (
+            {breakdown.length === 0 ? (
               <div className="rounded-lg border border-dashed bg-slate-50 p-4 text-center text-sm text-slate-400">
-                No allocations this week
+                No assignments this week
               </div>
             ) : (
               <div className="space-y-2">
-                {allocations.map((alloc) => (
+                {breakdown.map((item) => (
                   <div
-                    key={alloc.id}
+                    key={item.project.id}
                     className="flex items-center justify-between rounded-lg border bg-white p-3"
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-900 truncate">
-                        {alloc.project?.project_name ?? 'Unknown Project'}
+                        {item.project.project_name}
                       </p>
                       <p className="text-xs text-slate-500 truncate">
-                        {alloc.project?.client_name ?? ''}
-                        {alloc.role_on_project && (
-                          <span className="ml-1">
-                            &middot; {alloc.role_on_project}
-                          </span>
-                        )}
+                        {item.project.client_name ?? ''}
+                        <span className="ml-1">
+                          &middot; {item.role}
+                        </span>
                       </p>
                     </div>
                     <div className="text-right ml-3 shrink-0">
                       <p className="text-sm font-bold text-slate-900">
-                        {alloc.hours_allocated}h
+                        {item.hours}h
                       </p>
-                      {alloc.hours_actual != null && (
-                        <p className="text-xs text-slate-400">
-                          {alloc.hours_actual}h actual
-                        </p>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -1268,7 +1230,7 @@ function MemberDetailPanel({
                 {/* Total bar */}
                 <div className="flex items-center justify-between rounded-lg bg-slate-100 p-3 mt-1">
                   <span className="text-sm font-medium text-slate-700">
-                    Total Allocated
+                    Total Assigned
                   </span>
                   <span className="text-sm font-bold text-slate-900">
                     {totalAllocated}h / {available}h available

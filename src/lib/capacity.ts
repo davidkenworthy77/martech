@@ -201,3 +201,67 @@ export function getAssignedHoursForWeek(
 
   return Math.round(totalHours * 10) / 10
 }
+
+/**
+ * Return per-project breakdown of assigned hours for a member in a given week.
+ */
+export function getAssignedHoursBreakdown(
+  memberId: string,
+  weekStarting: string,
+  allProjects: Project[]
+): { project: Project; hours: number; role: string }[] {
+  const result: { project: Project; hours: number; role: string }[] = []
+  const weekStart = parseISO(weekStarting)
+  const weekEnd = addDays(weekStart, 6)
+
+  for (const project of allProjects) {
+    if (project.status !== 'Active') continue
+
+    const isAssignedPm = project.lead_pm_id === memberId
+    const isAssignedDev = project.lead_dev_id === memberId
+
+    if (!isAssignedPm && !isAssignedDev) continue
+
+    let hours = 0
+
+    if (project.category === 'retainer' || project.category === 'internal') {
+      const monthlyTotal = Number(project.monthly_hours_total) || 0
+      const pmPct = Number(project.pm_split_pct) || 0
+      const devPct = Number(project.dev_split_pct) || 0
+      if (isAssignedPm) hours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH
+      if (isAssignedDev) hours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH
+    } else if (project.category === 'project') {
+      if (!project.start_date || !project.end_date) continue
+
+      const projectStart = parseISO(project.start_date)
+      const projectEnd = parseISO(project.end_date)
+      const totalProjectHours = Number(project.monthly_hours_total) || 0
+      const pmPct = Number(project.pm_split_pct) || 0
+      const devPct = Number(project.dev_split_pct) || 0
+
+      if (isAssignedPm && weekStart <= projectEnd && weekEnd >= projectStart) {
+        const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
+        const pmWeeks = Math.max(1, pmDays / 7)
+        hours += (totalProjectHours * pmPct / 100) / pmWeeks
+      }
+
+      if (isAssignedDev) {
+        const devStart = project.dev_start_date ? parseISO(project.dev_start_date) : projectStart
+        const devEnd = project.dev_end_date ? parseISO(project.dev_end_date) : projectEnd
+
+        if (weekStart <= devEnd && weekEnd >= devStart) {
+          const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
+          const devWeeks = Math.max(1, devDays / 7)
+          hours += (totalProjectHours * devPct / 100) / devWeeks
+        }
+      }
+    }
+
+    if (hours > 0) {
+      const role = isAssignedPm && isAssignedDev ? 'PM + Dev' : isAssignedPm ? 'PM' : 'Dev'
+      result.push({ project, hours: Math.round(hours * 10) / 10, role })
+    }
+  }
+
+  return result
+}
