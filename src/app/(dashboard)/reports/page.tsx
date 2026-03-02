@@ -87,8 +87,8 @@ export default function ReportsPage() {
   const [timeOff, setTimeOff] = useState<TimeOff[]>([])
   const [loading, setLoading] = useState(true)
 
-  const [viewMode, setViewMode] = useState<ViewMode>('monthly')
-  const [rangeMonths, setRangeMonths] = useState<RangeMonths>(3)
+  const [viewMode, setViewMode] = useState<ViewMode>('weekly')
+  const [rangeMonths, setRangeMonths] = useState<RangeMonths>(6)
 
   // Fetch data
   useEffect(() => {

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dev Capacity - Resource Management",
+  title: "MarTech UT - Resource Management",
   description: "Capacity planning and resource management for the web development team",
 };
 

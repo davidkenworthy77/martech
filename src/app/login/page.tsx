@@ -50,7 +50,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-slate-900 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">Dev Capacity</CardTitle>
+          <CardTitle className="text-2xl font-bold">MarTech UT</CardTitle>
           <CardDescription>
             Resource management for the web development team
           </CardDescription>
