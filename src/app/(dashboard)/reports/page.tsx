@@ -32,22 +32,24 @@ import { Loader2, Download } from 'lucide-react'
 // ---------------------------------------------------------------------------
 
 type ViewMode = 'weekly' | 'monthly'
+type RangeMonths = 3 | 6 | 12
 
-/** Generate `count` weeks starting from the current week going FORWARD */
-function getWeeksForward(count: number): string[] {
+/** Generate weeks starting from the current week covering `monthCount` months forward */
+function getWeeksForMonths(monthCount: number): string[] {
+  const weekCount = Math.round(monthCount * 4.33)
   const current = getCurrentWeekStart()
   const weeks: string[] = []
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < weekCount; i++) {
     weeks.push(navigateWeek(current, i))
   }
   return weeks
 }
 
-/** Generate 12 months starting from the current month going forward */
-function getMonthsForward(): { value: string; label: string; weeks: string[] }[] {
+/** Generate `monthCount` months starting from the current month going forward */
+function getMonthsForward(monthCount: number): { value: string; label: string; weeks: string[] }[] {
   const now = new Date()
   const months: { value: string; label: string; weeks: string[] }[] = []
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < monthCount; i++) {
     const monthDate = addMonths(new Date(now.getFullYear(), now.getMonth(), 1), i)
     const monthStr = format(monthDate, 'yyyy-MM')
     const start = startOfMonth(monthDate)
@@ -86,6 +88,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
 
   const [viewMode, setViewMode] = useState<ViewMode>('monthly')
+  const [rangeMonths, setRangeMonths] = useState<RangeMonths>(3)
 
   // Fetch data
   useEffect(() => {
@@ -109,9 +112,9 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Time periods — both go FORWARD from the current week/month
-  const weeks12 = useMemo(() => getWeeksForward(12), [])
-  const months = useMemo(() => getMonthsForward(), [])
+  // Time periods — both go FORWARD, driven by rangeMonths
+  const weeks = useMemo(() => getWeeksForMonths(rangeMonths), [rangeMonths])
+  const months = useMemo(() => getMonthsForward(rangeMonths), [rangeMonths])
 
   // Sorted members: PM first, then Dev
   const sortedMembers = useMemo(() => {
@@ -124,7 +127,7 @@ export default function ReportsPage() {
   const gridData = useMemo(() => {
     if (viewMode === 'weekly') {
       return sortedMembers.map((member) => {
-        const cells = weeks12.map((week) => {
+        const cells = weeks.map((week) => {
           const available = getAvailableHours(member, week, holidays, timeOff)
           const assigned = getAssignedHoursForWeek(member.id, week, projects)
           return getUtilizationPercent(assigned, available)
@@ -147,15 +150,15 @@ export default function ReportsPage() {
         return { member, cells }
       })
     }
-  }, [viewMode, sortedMembers, weeks12, months, holidays, timeOff, projects])
+  }, [viewMode, sortedMembers, weeks, months, holidays, timeOff, projects])
 
   // Column headers
   const columnHeaders = useMemo(() => {
     if (viewMode === 'weekly') {
-      return weeks12.map((w) => format(parseISO(w), 'MMM d'))
+      return weeks.map((w) => format(parseISO(w), 'MMM d'))
     }
     return months.map((m) => m.label)
-  }, [viewMode, weeks12, months])
+  }, [viewMode, weeks, months])
 
   // CSV export
   const exportCSV = () => {
@@ -174,7 +177,7 @@ export default function ReportsPage() {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `utilization-${viewMode}.csv`
+    link.download = `utilization-${viewMode}-${rangeMonths}mo.csv`
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -200,10 +203,27 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Team utilization forecast — current {viewMode === 'weekly' ? 'week' : 'month'} + 11 {viewMode === 'weekly' ? 'weeks' : 'months'} ahead
+            Team utilization forecast — next {rangeMonths} months
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Range selector */}
+          <div className="flex rounded-lg border overflow-hidden">
+            {([3, 6, 12] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setRangeMonths(m)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  rangeMonths === m
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {m}mo
+              </button>
+            ))}
+          </div>
+          {/* View mode */}
           <div className="flex rounded-lg border overflow-hidden">
             <button
               onClick={() => setViewMode('weekly')}
@@ -248,10 +268,10 @@ export default function ReportsPage() {
                   </th>
                   {columnHeaders.map((header, i) => (
                     <th
-                      key={header}
-                      className={`px-3 py-3 text-center font-semibold min-w-[80px] ${
-                        i === 0 ? 'border-l-2 border-l-blue-400' : ''
-                      }`}
+                      key={`${header}-${i}`}
+                      className={`px-3 py-3 text-center font-semibold whitespace-nowrap ${
+                        viewMode === 'weekly' ? 'min-w-[64px]' : 'min-w-[80px]'
+                      } ${i === 0 ? 'border-l-2 border-l-blue-400' : ''}`}
                     >
                       {header}
                     </th>
@@ -277,7 +297,7 @@ export default function ReportsPage() {
                       {row.cells.map((util, colIndex) => (
                         <td
                           key={colIndex}
-                          className={`px-3 py-2.5 text-center font-medium tabular-nums ${cellColor(util)} ${
+                          className={`px-2 py-2.5 text-center font-medium tabular-nums text-xs ${cellColor(util)} ${
                             colIndex === 0 ? 'border-l-2 border-l-blue-400' : ''
                           }`}
                         >
