@@ -135,17 +135,18 @@ export default function ReportsPage() {
         return { member, cells }
       })
     } else {
-      // Monthly: average weekly utilization for each month
+      // Monthly: sum assigned & available hours across weeks, then compute %
+      // (avoids PTO weeks with tiny available hours inflating the average)
       return sortedMembers.map((member) => {
         const cells = months.map((month) => {
           if (month.weeks.length === 0) return 0
-          let totalUtilization = 0
+          let totalAssigned = 0
+          let totalAvailable = 0
           for (const week of month.weeks) {
-            const available = getAvailableHours(member, week, holidays, timeOff)
-            const assigned = getAssignedHoursForWeek(member.id, week, projects)
-            totalUtilization += getUtilizationPercent(assigned, available)
+            totalAvailable += getAvailableHours(member, week, holidays, timeOff)
+            totalAssigned += getAssignedHoursForWeek(member.id, week, projects)
           }
-          return Math.round(totalUtilization / month.weeks.length)
+          return getUtilizationPercent(totalAssigned, totalAvailable)
         })
         return { member, cells }
       })
