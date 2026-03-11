@@ -58,6 +58,19 @@ function clientStatusBadgeClass(status: string): string {
   }
 }
 
+function companyBadgeClass(company: string): string {
+  switch (company) {
+    case 'MMGY':
+      return 'bg-blue-100 text-blue-700 hover:bg-blue-100'
+    case 'Origin':
+      return 'bg-purple-100 text-purple-700 hover:bg-purple-100'
+    case 'Other':
+      return 'bg-gray-100 text-gray-700 hover:bg-gray-100'
+    default:
+      return 'bg-gray-100 text-gray-700 hover:bg-gray-100'
+  }
+}
+
 function projectStatusBadgeClass(status: string): string {
   switch (status) {
     case 'Planning':
@@ -94,6 +107,7 @@ export default function ClientsPage() {
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState('')
   const [editStatus, setEditStatus] = useState('Active')
+  const [editCompany, setEditCompany] = useState('MMGY')
   const [editNotes, setEditNotes] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -152,6 +166,7 @@ export default function ClientsPage() {
     setSelectedClient(client)
     setEditName(client.name)
     setEditStatus(client.status ?? 'Active')
+    setEditCompany(client.company ?? 'MMGY')
     setEditNotes(client.notes ?? '')
     setEditing(false)
     setSheetOpen(true)
@@ -161,6 +176,7 @@ export default function ClientsPage() {
     setSelectedClient(null)
     setEditName('')
     setEditStatus('Active')
+    setEditCompany('MMGY')
     setEditNotes('')
     setEditing(true)
     setSheetOpen(true)
@@ -173,6 +189,7 @@ export default function ClientsPage() {
     const payload = {
       name: editName.trim(),
       status: editStatus,
+      company: editCompany,
       notes: editNotes.trim() || null,
     }
 
@@ -294,6 +311,7 @@ export default function ClientsPage() {
               <TableHeader>
                 <TableRow className="bg-slate-50/80">
                   <TableHead className="pl-4">Name</TableHead>
+                  <TableHead>Company</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right"># Retainers</TableHead>
                   <TableHead className="text-right"># Projects</TableHead>
@@ -313,6 +331,14 @@ export default function ClientsPage() {
                     >
                       <TableCell className="pl-4 font-medium text-slate-900">
                         {client.name}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={companyBadgeClass(client.company)}
+                        >
+                          {client.company}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge
@@ -356,6 +382,8 @@ export default function ClientsPage() {
               setEditName={setEditName}
               editStatus={editStatus}
               setEditStatus={setEditStatus}
+              editCompany={editCompany}
+              setEditCompany={setEditCompany}
               editNotes={editNotes}
               setEditNotes={setEditNotes}
               saving={saving}
@@ -364,6 +392,7 @@ export default function ClientsPage() {
                 if (selectedClient) {
                   setEditName(selectedClient.name)
                   setEditStatus(selectedClient.status ?? 'Active')
+                  setEditCompany(selectedClient.company ?? 'MMGY')
                   setEditNotes(selectedClient.notes ?? '')
                   setEditing(false)
                 } else {
@@ -410,6 +439,12 @@ function ViewModePanel({
           <div>
             <SheetTitle className="text-lg">{client.name}</SheetTitle>
             <SheetDescription className="flex items-center gap-2 mt-1">
+              <Badge
+                variant="secondary"
+                className={companyBadgeClass(client.company)}
+              >
+                {client.company}
+              </Badge>
               <Badge
                 variant="secondary"
                 className={clientStatusBadgeClass(client.status ?? 'Active')}
@@ -547,6 +582,8 @@ function EditModePanel({
   setEditName,
   editStatus,
   setEditStatus,
+  editCompany,
+  setEditCompany,
   editNotes,
   setEditNotes,
   saving,
@@ -559,6 +596,8 @@ function EditModePanel({
   setEditName: (v: string) => void
   editStatus: string
   setEditStatus: (v: string) => void
+  editCompany: string
+  setEditCompany: (v: string) => void
   editNotes: string
   setEditNotes: (v: string) => void
   saving: boolean
@@ -630,6 +669,21 @@ function EditModePanel({
               <SelectContent>
                 <SelectItem value="Active">Active</SelectItem>
                 <SelectItem value="Inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Company */}
+          <div>
+            <Label className="text-sm font-medium">Company</Label>
+            <Select value={editCompany} onValueChange={setEditCompany}>
+              <SelectTrigger className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Origin">Origin</SelectItem>
+                <SelectItem value="MMGY">MMGY</SelectItem>
+                <SelectItem value="Other">Other</SelectItem>
               </SelectContent>
             </Select>
           </div>

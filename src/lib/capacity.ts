@@ -151,11 +151,15 @@ export function getAssignedHoursForWeek(
     if (project.status !== 'Active') continue
 
     const isAssignedPm = project.lead_pm_id === memberId
-    const isAssignedDev = project.lead_dev_id === memberId
+    // For retainers/internal: use dev_ids array; for projects: use lead_dev_id
+    const isRetainerLike = project.category === 'retainer' || project.category === 'internal'
+    const isAssignedDev = isRetainerLike
+      ? (project.dev_ids ?? []).includes(memberId)
+      : project.lead_dev_id === memberId
 
     if (!isAssignedPm && !isAssignedDev) continue
 
-    if (project.category === 'retainer' || project.category === 'internal') {
+    if (isRetainerLike) {
       // Retainers & internal: monthly hours spread evenly across weeks
       const monthlyTotal = Number(project.monthly_hours_total) || 0
       const pmPct = Number(project.pm_split_pct) || 0
@@ -164,7 +168,8 @@ export function getAssignedHoursForWeek(
         totalHours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH
       }
       if (isAssignedDev) {
-        totalHours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH
+        const devCount = (project.dev_ids ?? []).length || 1
+        totalHours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH / devCount
       }
     } else if (project.category === 'project') {
       // Projects: total hours spread across relevant timeline per role
@@ -218,18 +223,24 @@ export function getAssignedHoursBreakdown(
     if (project.status !== 'Active') continue
 
     const isAssignedPm = project.lead_pm_id === memberId
-    const isAssignedDev = project.lead_dev_id === memberId
+    const isRetainerLike = project.category === 'retainer' || project.category === 'internal'
+    const isAssignedDev = isRetainerLike
+      ? (project.dev_ids ?? []).includes(memberId)
+      : project.lead_dev_id === memberId
 
     if (!isAssignedPm && !isAssignedDev) continue
 
     let hours = 0
 
-    if (project.category === 'retainer' || project.category === 'internal') {
+    if (isRetainerLike) {
       const monthlyTotal = Number(project.monthly_hours_total) || 0
       const pmPct = Number(project.pm_split_pct) || 0
       const devPct = Number(project.dev_split_pct) || 0
       if (isAssignedPm) hours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH
-      if (isAssignedDev) hours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH
+      if (isAssignedDev) {
+        const devCount = (project.dev_ids ?? []).length || 1
+        hours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH / devCount
+      }
     } else if (project.category === 'project') {
       if (!project.start_date || !project.end_date) continue
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   getAvailableHours,
@@ -8,6 +8,9 @@ import {
   getCurrentWeekStart,
   navigateWeek,
   getAssignedHoursForWeek,
+  getAssignedHoursBreakdown,
+  getHolidayHoursForWeek,
+  getPtoHoursForWeek,
 } from '@/lib/capacity'
 import type {
   TeamMember,
@@ -25,7 +28,13 @@ import {
 } from 'date-fns'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Loader2, Download } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { Loader2, Download, X } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,6 +98,14 @@ export default function ReportsPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>('weekly')
   const [rangeMonths, setRangeMonths] = useState<RangeMonths>(6)
+
+  // Cell detail popover state
+  const [popoverOpen, setPopoverOpen] = useState(false)
+  const [selectedCell, setSelectedCell] = useState<{
+    member: TeamMember
+    colIndex: number
+  } | null>(null)
+  const popoverAnchorRef = useRef<HTMLTableCellElement | null>(null)
 
   // Fetch data
   useEffect(() => {
@@ -160,6 +177,56 @@ export default function ReportsPage() {
     }
     return months.map((m) => m.label)
   }, [viewMode, weeks, months])
+
+  // Selected cell detail
+  const cellDetail = useMemo(() => {
+    if (!selectedCell) return null
+    const { member, colIndex } = selectedCell
+
+    if (viewMode === 'weekly') {
+      const week = weeks[colIndex]
+      if (!week) return null
+      const available = getAvailableHours(member, week, holidays, timeOff)
+      const breakdown = getAssignedHoursBreakdown(member.id, week, projects)
+      const totalAssigned = breakdown.reduce((sum, b) => sum + b.hours, 0)
+      const holidayHrs = getHolidayHoursForWeek(member, week, holidays)
+      const ptoHrs = getPtoHoursForWeek(member, week, timeOff)
+      const util = getUtilizationPercent(totalAssigned, available)
+      return { member, label: columnHeaders[colIndex], available, totalAssigned, breakdown, holidayHrs, ptoHrs, util, weeklyHours: member.weekly_hours ?? 40, adminHours: member.admin_hours ?? 4 }
+    } else {
+      const month = months[colIndex]
+      if (!month) return null
+      let totalAvailable = 0
+      let totalHoliday = 0
+      let totalPto = 0
+      const breakdownMap = new Map<string, { project: Project; hours: number; role: string }>()
+      for (const week of month.weeks) {
+        totalAvailable += getAvailableHours(member, week, holidays, timeOff)
+        totalHoliday += getHolidayHoursForWeek(member, week, holidays)
+        totalPto += getPtoHoursForWeek(member, week, timeOff)
+        const wb = getAssignedHoursBreakdown(member.id, week, projects)
+        for (const item of wb) {
+          const existing = breakdownMap.get(item.project.id)
+          if (existing) {
+            existing.hours += item.hours
+          } else {
+            breakdownMap.set(item.project.id, { ...item })
+          }
+        }
+      }
+      const breakdown = Array.from(breakdownMap.values()).map(b => ({ ...b, hours: Math.round(b.hours * 10) / 10 }))
+      const totalAssigned = Math.round(breakdown.reduce((sum, b) => sum + b.hours, 0) * 10) / 10
+      const util = getUtilizationPercent(totalAssigned, totalAvailable)
+      const weeksInMonth = month.weeks.length
+      return { member, label: columnHeaders[colIndex], available: Math.round(totalAvailable * 10) / 10, totalAssigned, breakdown, holidayHrs: Math.round(totalHoliday * 10) / 10, ptoHrs: Math.round(totalPto * 10) / 10, util, weeklyHours: (member.weekly_hours ?? 40) * weeksInMonth, adminHours: (member.admin_hours ?? 4) * weeksInMonth }
+    }
+  }, [selectedCell, viewMode, weeks, months, holidays, timeOff, projects, columnHeaders])
+
+  function handleCellClick(member: TeamMember, colIndex: number, tdElement: HTMLTableCellElement) {
+    popoverAnchorRef.current = tdElement
+    setSelectedCell({ member, colIndex })
+    setPopoverOpen(true)
+  }
 
   // CSV export
   const exportCSV = () => {
@@ -298,9 +365,10 @@ export default function ReportsPage() {
                       {row.cells.map((util, colIndex) => (
                         <td
                           key={colIndex}
-                          className={`px-2 py-2.5 text-center font-medium tabular-nums text-xs ${cellColor(util)} ${
+                          className={`px-2 py-2.5 text-center font-medium tabular-nums text-xs cursor-pointer hover:ring-2 hover:ring-slate-400 hover:ring-inset transition-shadow ${cellColor(util)} ${
                             colIndex === 0 ? 'border-l-2 border-l-blue-400' : ''
                           }`}
+                          onClick={(e) => handleCellClick(row.member, colIndex, e.currentTarget)}
                         >
                           {util}%
                         </td>
@@ -313,6 +381,143 @@ export default function ReportsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Cell Detail Popover */}
+      {popoverOpen && cellDetail && popoverAnchorRef.current && (
+        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <PopoverTrigger asChild>
+            <span
+              ref={(el) => {
+                if (el && popoverAnchorRef.current) {
+                  const rect = popoverAnchorRef.current.getBoundingClientRect()
+                  el.style.position = 'fixed'
+                  el.style.left = `${rect.left + rect.width / 2}px`
+                  el.style.top = `${rect.top + rect.height / 2}px`
+                  el.style.width = '0'
+                  el.style.height = '0'
+                  el.style.pointerEvents = 'none'
+                }
+              }}
+            />
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-80 p-0"
+            side="right"
+            align="start"
+            sideOffset={8}
+          >
+            <div className="p-4 space-y-3">
+              {/* Header */}
+              <div className="flex items-start justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm text-slate-900">
+                    {cellDetail.member.name}
+                  </h4>
+                  <p className="text-xs text-slate-500">{cellDetail.label}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-lg font-bold tabular-nums ${
+                      cellDetail.util >= 100
+                        ? 'text-red-600'
+                        : cellDetail.util >= 85
+                          ? 'text-orange-600'
+                          : cellDetail.util >= 70
+                            ? 'text-green-600'
+                            : 'text-slate-600'
+                    }`}
+                  >
+                    {cellDetail.util}%
+                  </span>
+                  <button
+                    onClick={() => setPopoverOpen(false)}
+                    className="text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Hours summary */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-md bg-slate-50 p-2">
+                  <p className="text-slate-500">Available</p>
+                  <p className="font-semibold text-slate-900 tabular-nums">
+                    {cellDetail.available}h
+                  </p>
+                </div>
+                <div className="rounded-md bg-slate-50 p-2">
+                  <p className="text-slate-500">Assigned</p>
+                  <p className="font-semibold text-slate-900 tabular-nums">
+                    {cellDetail.totalAssigned}h
+                  </p>
+                </div>
+              </div>
+
+              {/* Deductions */}
+              {(cellDetail.holidayHrs > 0 || cellDetail.ptoHrs > 0) && (
+                <div className="text-xs space-y-1">
+                  <p className="font-medium text-slate-700">Deductions</p>
+                  <div className="space-y-0.5 text-slate-500">
+                    <p>
+                      Base hours: {cellDetail.weeklyHours}h − {cellDetail.adminHours}h admin
+                      {cellDetail.holidayHrs > 0 && (
+                        <> − {cellDetail.holidayHrs}h holiday</>
+                      )}
+                      {cellDetail.ptoHrs > 0 && (
+                        <> − {cellDetail.ptoHrs}h PTO</>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Project breakdown */}
+              <div className="text-xs space-y-1.5">
+                <p className="font-medium text-slate-700">Assignments</p>
+                {cellDetail.breakdown.length === 0 ? (
+                  <p className="text-slate-400 italic">No assignments this {viewMode === 'weekly' ? 'week' : 'month'}</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {cellDetail.breakdown
+                      .sort((a, b) => b.hours - a.hours)
+                      .map((item) => (
+                        <div
+                          key={item.project.id}
+                          className="flex items-center justify-between rounded-md border bg-white p-2"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-slate-900 truncate">
+                              {item.project.project_name}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <Badge
+                                variant="secondary"
+                                className={`text-[10px] px-1.5 py-0 ${
+                                  item.project.category === 'retainer'
+                                    ? 'bg-blue-50 text-blue-700'
+                                    : item.project.category === 'internal'
+                                      ? 'bg-purple-50 text-purple-700'
+                                      : 'bg-amber-50 text-amber-700'
+                                }`}
+                              >
+                                {item.project.category}
+                              </Badge>
+                              <span className="text-slate-400">as {item.role}</span>
+                            </div>
+                          </div>
+                          <span className="font-bold text-slate-900 tabular-nums ml-2 shrink-0">
+                            {item.hours}h
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">

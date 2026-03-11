@@ -12,6 +12,7 @@ import {
   getAssignedHoursForWeek,
 } from '@/lib/capacity'
 import { WeekPicker } from '@/components/week-picker'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -34,8 +35,10 @@ import {
   CalendarDays,
   FolderKanban,
   Loader2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
-import { format, parseISO, addDays } from 'date-fns'
+import { format, parseISO, addDays, startOfMonth, endOfMonth, addMonths, eachWeekOfInterval } from 'date-fns'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -127,13 +130,24 @@ function ChartTooltip({
 // ---------------------------------------------------------------------------
 
 export default function DashboardPage() {
+  type DashboardView = 'weekly' | 'monthly'
+  const [dashboardView, setDashboardView] = useState<DashboardView>('weekly')
   const [weekStarting, setWeekStarting] = useState(getCurrentWeekStart)
+  const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()))
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [allProjects, setAllProjects] = useState<Project[]>([])
   const [timeOff, setTimeOff] = useState<TimeOff[]>([])
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Compute weeks in the selected month
+  const monthWeeks = useMemo(() => {
+    const start = startOfMonth(currentMonth)
+    const end = endOfMonth(currentMonth)
+    return eachWeekOfInterval({ start, end }, { weekStartsOn: 1 })
+      .map(w => format(w, 'yyyy-MM-dd'))
+  }, [currentMonth])
 
   // -----------------------------------------------------------------------
   // Data fetching
@@ -188,19 +202,30 @@ export default function DashboardPage() {
 
   const memberUtilizations: MemberUtilization[] = useMemo(() => {
     return teamMembers.map((m) => {
-      const available = getAvailableHours(m, weekStarting, holidays, timeOff)
-      const allocated = getAssignedHoursForWeek(m.id, weekStarting, allProjects)
+      let available: number
+      let allocated: number
+      if (dashboardView === 'weekly') {
+        available = getAvailableHours(m, weekStarting, holidays, timeOff)
+        allocated = getAssignedHoursForWeek(m.id, weekStarting, allProjects)
+      } else {
+        available = 0
+        allocated = 0
+        for (const week of monthWeeks) {
+          available += getAvailableHours(m, week, holidays, timeOff)
+          allocated += getAssignedHoursForWeek(m.id, week, allProjects)
+        }
+      }
       const utilization = getUtilizationPercent(allocated, available)
       return {
         id: m.id,
         name: m.name,
         department: m.department,
-        availableHours: available,
-        allocatedHours: allocated,
+        availableHours: Math.round(available * 10) / 10,
+        allocatedHours: Math.round(allocated * 10) / 10,
         utilization,
       }
     })
-  }, [teamMembers, allProjects, weekStarting, holidays, timeOff])
+  }, [teamMembers, allProjects, weekStarting, holidays, timeOff, dashboardView, monthWeeks])
 
   const departmentStats = useMemo(() => {
     const pm = memberUtilizations.filter((m) => m.department === 'PM')
@@ -232,14 +257,15 @@ export default function DashboardPage() {
   }, [memberUtilizations])
 
   const projectSummaries: ProjectSummary[] = useMemo(() => {
+    const weeksToCheck = dashboardView === 'weekly' ? [weekStarting] : monthWeeks
     return projects
       .map((p) => {
-        // Sum up assigned hours for all team members on this project this week
         let totalHours = 0
         for (const m of teamMembers) {
-          if (p.lead_pm_id === m.id || p.lead_dev_id === m.id) {
-            const hrs = getAssignedHoursForWeek(m.id, weekStarting, [p])
-            totalHours += hrs
+          if (p.lead_pm_id === m.id || p.lead_dev_id === m.id || (p.dev_ids ?? []).includes(m.id)) {
+            for (const week of weeksToCheck) {
+              totalHours += getAssignedHoursForWeek(m.id, week, [p])
+            }
           }
         }
         return {
@@ -254,7 +280,7 @@ export default function DashboardPage() {
       })
       .filter((p) => p.totalHours > 0)
       .sort((a, b) => b.totalHours - a.totalHours)
-  }, [projects, teamMembers, weekStarting])
+  }, [projects, teamMembers, weekStarting, dashboardView, monthWeeks])
 
   const upcomingPto: UpcomingPto[] = useMemo(() => {
     const today = new Date()
@@ -303,10 +329,68 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground">
-            Weekly capacity overview for your team
+            {dashboardView === 'weekly' ? 'Weekly' : 'Monthly'} capacity overview for your team
           </p>
         </div>
-        <WeekPicker weekStarting={weekStarting} onChange={setWeekStarting} />
+        <div className="flex items-center gap-3">
+          {/* View toggle */}
+          <div className="flex rounded-lg border overflow-hidden">
+            <button
+              onClick={() => setDashboardView('weekly')}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                dashboardView === 'weekly'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Weekly
+            </button>
+            <button
+              onClick={() => setDashboardView('monthly')}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                dashboardView === 'monthly'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Monthly
+            </button>
+          </div>
+          {/* Period picker */}
+          {dashboardView === 'weekly' ? (
+            <WeekPicker weekStarting={weekStarting} onChange={setWeekStarting} />
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setCurrentMonth(prev => addMonths(prev, -1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="min-w-[140px] text-center">
+                <span className="text-sm font-medium">
+                  {format(currentMonth, 'MMMM yyyy')}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setCurrentMonth(startOfMonth(new Date()))}
+                className="ml-2 text-xs"
+              >
+                This Month
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Department Utilization Summary Cards */}
@@ -341,7 +425,7 @@ export default function DashboardPage() {
           <CardHeader>
             <CardTitle className="text-base">Team Utilization</CardTitle>
             <CardDescription>
-              Individual utilization for the selected week
+              Individual utilization for the selected {dashboardView === 'weekly' ? 'week' : 'month'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -458,7 +542,7 @@ export default function DashboardPage() {
             </CardTitle>
             <CardDescription>
               {alerts.overloaded.length + alerts.underutilized.length === 0
-                ? 'No alerts this week'
+                ? `No alerts this ${dashboardView === 'weekly' ? 'week' : 'month'}`
                 : `${alerts.overloaded.length + alerts.underutilized.length} alert${alerts.overloaded.length + alerts.underutilized.length !== 1 ? 's' : ''}`}
             </CardDescription>
           </CardHeader>
@@ -526,13 +610,13 @@ export default function DashboardPage() {
               Active Projects
             </CardTitle>
             <CardDescription>
-              Projects with allocations this week, sorted by hours
+              Projects with allocations this {dashboardView === 'weekly' ? 'week' : 'month'}, sorted by hours
             </CardDescription>
           </CardHeader>
           <CardContent>
             {projectSummaries.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
-                No projects with allocations this week.
+                No projects with allocations this {dashboardView === 'weekly' ? 'week' : 'month'}.
               </p>
             ) : (
               <div className="space-y-3">

@@ -30,6 +30,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
@@ -40,8 +41,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  FolderKanban,
-  TableProperties,
   Loader2,
   Plus,
   Save,
@@ -58,12 +57,10 @@ import {
 type ProjectWithLeads = Project & {
   lead_pm?: TeamMember | null
   lead_dev?: TeamMember | null
+  lead_devs?: TeamMember[]
 }
 
-type ViewMode = 'table' | 'kanban'
-
 const STATUSES = ['All', 'Planning', 'Active', 'On Hold', 'Complete'] as const
-const KANBAN_STATUSES = ['Planning', 'Active', 'On Hold', 'Complete'] as const
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -84,21 +81,6 @@ function statusBadgeClass(status: string): string {
   }
 }
 
-function kanbanColumnBorder(status: string): string {
-  switch (status) {
-    case 'Planning':
-      return 'border-t-yellow-400'
-    case 'Active':
-      return 'border-t-green-400'
-    case 'On Hold':
-      return 'border-t-orange-400'
-    case 'Complete':
-      return 'border-t-gray-400'
-    default:
-      return 'border-t-gray-400'
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Main page component
 // ---------------------------------------------------------------------------
@@ -115,9 +97,6 @@ export default function RetainersPage() {
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string>('All')
   const [searchQuery, setSearchQuery] = useState('')
-
-  // View state
-  const [viewMode, setViewMode] = useState<ViewMode>('table')
 
   // Detail sheet state
   const [selectedProject, setSelectedProject] = useState<ProjectWithLeads | null>(null)
@@ -136,7 +115,7 @@ export default function RetainersPage() {
   const [editStatus, setEditStatus] = useState('Active')
   const [editMonthlyHours, setEditMonthlyHours] = useState<number>(0)
   const [editLeadPmId, setEditLeadPmId] = useState<string>('')
-  const [editLeadDevId, setEditLeadDevId] = useState<string>('')
+  const [editDevIds, setEditDevIds] = useState<string[]>([])
   const [editNotes, setEditNotes] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -155,14 +134,25 @@ export default function RetainersPage() {
 
   const fetchProjects = useCallback(async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('projects')
-      .select('*, lead_pm:team_members!projects_lead_pm_id_fkey(*), lead_dev:team_members!projects_lead_dev_id_fkey(*)')
-      .eq('category', 'retainer')
-      .order('project_id_display', { ascending: true })
+    const [projectsRes, membersRes] = await Promise.all([
+      supabase
+        .from('projects')
+        .select('*, lead_pm:team_members!projects_lead_pm_id_fkey(*), lead_dev:team_members!projects_lead_dev_id_fkey(*)')
+        .eq('category', 'retainer')
+        .order('project_id_display', { ascending: true }),
+      supabase.from('team_members').select('*').eq('is_active', true).order('name'),
+    ])
 
-    if (!error && data) {
-      setProjects(data as unknown as ProjectWithLeads[])
+    if (!projectsRes.error && projectsRes.data) {
+      const allMembers = membersRes.data ?? []
+      const enriched = (projectsRes.data as unknown as ProjectWithLeads[]).map(p => ({
+        ...p,
+        lead_devs: (p.dev_ids ?? [])
+          .map(id => allMembers.find(m => m.id === id))
+          .filter((m): m is TeamMember => m != null),
+      }))
+      setProjects(enriched)
+      if (membersRes.data) setTeamMembers(allMembers)
     }
     setLoading(false)
   }, [supabase])
@@ -206,7 +196,7 @@ export default function RetainersPage() {
     setEditStatus(project.status ?? 'Active')
     setEditMonthlyHours(project.monthly_hours_total ?? 0)
     setEditLeadPmId(project.lead_pm_id ?? 'none')
-    setEditLeadDevId(project.lead_dev_id ?? 'none')
+    setEditDevIds(project.dev_ids ?? [])
     setEditNotes(project.notes ?? '')
     setConfirmDelete(false)
     setEditing(false)
@@ -229,7 +219,8 @@ export default function RetainersPage() {
       design_split_pct: editDesignSplit,
       strategy_split_pct: editStrategySplit,
       lead_pm_id: editLeadPmId === 'none' ? null : editLeadPmId,
-      lead_dev_id: editLeadDevId === 'none' ? null : editLeadDevId,
+      dev_ids: editDevIds.length > 0 ? editDevIds : null,
+      lead_dev_id: editDevIds.length > 0 ? editDevIds[0] : null,
       notes: editNotes || null,
     }
 
@@ -243,12 +234,12 @@ export default function RetainersPage() {
       await fetchProjects()
       // Update selectedProject locally
       const leadPm = teamMembers.find(m => m.id === editLeadPmId) ?? null
-      const leadDev = teamMembers.find(m => m.id === editLeadDevId) ?? null
+      const leadDevs = editDevIds.map(id => teamMembers.find(m => m.id === id)).filter((m): m is TeamMember => m != null)
       setSelectedProject(prev => prev ? {
         ...prev,
         ...updates,
         lead_pm: leadPm,
-        lead_dev: leadDev,
+        lead_devs: leadDevs,
       } : prev)
       setEditing(false)
     }
@@ -330,7 +321,7 @@ export default function RetainersPage() {
           p.client_name,
           p.project_name,
           p.lead_pm?.name,
-          p.lead_dev?.name,
+          ...(p.lead_devs?.map(d => d.name) ?? []),
         ]
           .filter(Boolean)
           .join(' ')
@@ -340,14 +331,6 @@ export default function RetainersPage() {
       return true
     })
   }, [projects, statusFilter, searchQuery])
-
-  const kanbanGroups = useMemo(() => {
-    const groups: Record<string, ProjectWithLeads[]> = {}
-    for (const status of KANBAN_STATUSES) {
-      groups[status] = filteredProjects.filter((p) => p.status === status)
-    }
-    return groups
-  }, [filteredProjects])
 
   // -------------------------------------------------------------------------
   // Calculated hours
@@ -392,22 +375,6 @@ export default function RetainersPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant={viewMode === 'table' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('table')}
-          >
-            <TableProperties className="h-4 w-4" />
-            Table
-          </Button>
-          <Button
-            variant={viewMode === 'kanban' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('kanban')}
-          >
-            <FolderKanban className="h-4 w-4" />
-            Kanban
-          </Button>
         </div>
       </div>
 
@@ -469,14 +436,14 @@ export default function RetainersPage() {
       {/* Empty state */}
       {!loading && filteredProjects.length === 0 && (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-          <FolderKanban className="h-12 w-12 mb-3" />
+          <Search className="h-12 w-12 mb-3" />
           <p className="text-lg font-medium">No retainers found</p>
           <p className="text-sm">Try adjusting your filters</p>
         </div>
       )}
 
       {/* Table View */}
-      {!loading && filteredProjects.length > 0 && viewMode === 'table' && (
+      {!loading && filteredProjects.length > 0 && (
         <Card className="py-0">
           <CardContent className="p-0">
             <Table>
@@ -550,7 +517,9 @@ export default function RetainersPage() {
                       {project.lead_pm?.name ?? '--'}
                     </TableCell>
                     <TableCell className="text-slate-700">
-                      {project.lead_dev?.name ?? '--'}
+                      {(project.lead_devs?.length ?? 0) > 0
+                        ? project.lead_devs!.map(d => d.name).join(', ')
+                        : '--'}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -558,105 +527,6 @@ export default function RetainersPage() {
             </Table>
           </CardContent>
         </Card>
-      )}
-
-      {/* Kanban View */}
-      {!loading && filteredProjects.length > 0 && viewMode === 'kanban' && (
-        <div className="grid grid-cols-4 gap-4">
-          {KANBAN_STATUSES.map((status) => (
-            <div key={status} className="space-y-3">
-              {/* Column header */}
-              <div
-                className={`rounded-lg border border-t-4 ${kanbanColumnBorder(status)} bg-white px-3 py-2.5`}
-              >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-700">{status}</h3>
-                  <Badge variant="secondary" className="bg-slate-100 text-slate-600 text-xs">
-                    {kanbanGroups[status].length}
-                  </Badge>
-                </div>
-              </div>
-
-              {/* Column cards */}
-              <div className="space-y-2.5">
-                {kanbanGroups[status].map((project) => (
-                  <div
-                    key={project.id}
-                    className="cursor-pointer rounded-lg border bg-white p-3.5 shadow-sm transition-shadow hover:shadow-md"
-                    onClick={() => handleProjectClick(project)}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <span className="font-mono text-[11px] text-slate-400">
-                        {project.project_id_display ?? '--'}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-500 mb-0.5">{project.client_name}</p>
-                    <p className="text-sm font-medium text-slate-900 mb-3 line-clamp-2">
-                      {project.project_name}
-                    </p>
-
-                    <Separator className="my-2.5" />
-
-                    <div className="grid grid-cols-5 gap-1 text-xs">
-                      <div className="text-center">
-                        <p className="text-slate-400">Total</p>
-                        <p className="font-semibold text-slate-700 tabular-nums">
-                          {project.monthly_hours_total ?? 0}h
-                        </p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-slate-400">PM</p>
-                        <p className="font-semibold text-slate-700 tabular-nums">
-                          {calcPmHours(project)}h
-                        </p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-slate-400">Dev</p>
-                        <p className="font-semibold text-slate-700 tabular-nums">
-                          {calcDevHours(project)}h
-                        </p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-slate-400">Design</p>
-                        <p className="font-semibold text-slate-700 tabular-nums">
-                          {calcDesignHours(project)}h
-                        </p>
-                      </div>
-                      <div className="text-center">
-                        <p className="text-slate-400">Strat</p>
-                        <p className="font-semibold text-slate-700 tabular-nums">
-                          {calcStrategyHours(project)}h
-                        </p>
-                      </div>
-                    </div>
-
-                    {(project.lead_pm || project.lead_dev) && (
-                      <div className="mt-2.5 flex flex-wrap gap-1">
-                        {project.lead_pm && (
-                          <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">
-                            PM: {project.lead_pm.name.split(' ')[0]}
-                          </span>
-                        )}
-                        {project.lead_dev && (
-                          <span className="inline-flex items-center rounded-md bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-600">
-                            Dev: {project.lead_dev.name.split(' ')[0]}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {kanbanGroups[status].length === 0 && (
-                  <div className="rounded-lg border border-dashed bg-slate-50/50 p-6 text-center">
-                    <p className="text-xs text-slate-400">No retainers</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
       )}
 
       {/* Retainer Detail Sheet */}
@@ -754,15 +624,19 @@ export default function RetainersPage() {
                           </div>
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Dev
+                              Dev{(selectedProject.lead_devs?.length ?? 0) > 1 ? 's' : ''}
                             </p>
-                            <p className="text-sm font-medium text-slate-900">
-                              {selectedProject.lead_dev?.name ?? 'Unassigned'}
-                            </p>
-                            {selectedProject.lead_dev && (
-                              <p className="text-xs text-slate-500 mt-0.5">
-                                {selectedProject.lead_dev.role}
-                              </p>
+                            {(selectedProject.lead_devs?.length ?? 0) === 0 ? (
+                              <p className="text-sm font-medium text-slate-900">Unassigned</p>
+                            ) : (
+                              <div className="space-y-1">
+                                {selectedProject.lead_devs!.map(dev => (
+                                  <div key={dev.id}>
+                                    <p className="text-sm font-medium text-slate-900">{dev.name}</p>
+                                    <p className="text-xs text-slate-500">{dev.role}</p>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -969,18 +843,37 @@ export default function RetainersPage() {
                         </Select>
                       </div>
 
-                      {/* Dev */}
+                      {/* Dev(s) */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Dev</Label>
-                        <Select value={editLeadDevId} onValueChange={setEditLeadDevId}>
-                          <SelectTrigger><SelectValue placeholder="Select Dev" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Unassigned</SelectItem>
-                            {teamMembers.filter(m => m.department === 'Dev').map(m => (
-                              <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Label className="text-xs text-slate-600">
+                          Dev{editDevIds.length > 1 ? 's' : ''}{' '}
+                          {editDevIds.length > 0 && (
+                            <span className="text-slate-400 font-normal">
+                              ({editDevIds.length} selected — hours split evenly)
+                            </span>
+                          )}
+                        </Label>
+                        <div className="rounded-md border p-2 space-y-1.5 max-h-40 overflow-y-auto">
+                          {teamMembers.filter(m => m.department === 'Dev').map(m => (
+                            <label
+                              key={m.id}
+                              className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-slate-50 cursor-pointer"
+                            >
+                              <Checkbox
+                                checked={editDevIds.includes(m.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setEditDevIds(prev => [...prev, m.id])
+                                  } else {
+                                    setEditDevIds(prev => prev.filter(id => id !== m.id))
+                                  }
+                                }}
+                              />
+                              <span className="text-sm text-slate-900">{m.name}</span>
+                              <span className="text-xs text-slate-400 ml-auto">{m.role}</span>
+                            </label>
+                          ))}
+                        </div>
                       </div>
 
                       {/* Notes */}

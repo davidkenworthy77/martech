@@ -18,6 +18,7 @@ export type Database = {
           name: string
           status: string | null
           notes: string | null
+          company: string
           created_at: string | null
         }
         Insert: {
@@ -25,6 +26,7 @@ export type Database = {
           name: string
           status?: string | null
           notes?: string | null
+          company?: string
           created_at?: string | null
         }
         Update: {
@@ -32,6 +34,7 @@ export type Database = {
           name?: string
           status?: string | null
           notes?: string | null
+          company?: string
           created_at?: string | null
         }
         Relationships: []
@@ -80,6 +83,7 @@ export type Database = {
           created_at: string | null
           design_split_pct: number | null
           dev_end_date: string | null
+          dev_ids: string[] | null
           dev_split_pct: number | null
           dev_start_date: string | null
           end_date: string | null
@@ -103,6 +107,7 @@ export type Database = {
           created_at?: string | null
           design_split_pct?: number | null
           dev_end_date?: string | null
+          dev_ids?: string[] | null
           dev_split_pct?: number | null
           dev_start_date?: string | null
           end_date?: string | null
@@ -126,6 +131,7 @@ export type Database = {
           created_at?: string | null
           design_split_pct?: number | null
           dev_end_date?: string | null
+          dev_ids?: string[] | null
           dev_split_pct?: number | null
           dev_start_date?: string | null
           end_date?: string | null
