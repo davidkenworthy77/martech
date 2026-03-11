@@ -62,6 +62,8 @@ import { cn } from '@/lib/utils'
 type ProjectWithLeads = Project & {
   lead_pm?: TeamMember | null
   lead_dev?: TeamMember | null
+  pm_lead?: TeamMember | null
+  dev_lead?: TeamMember | null
 }
 
 const STATUSES = ['All', 'Planning', 'Active', 'On Hold', 'Complete'] as const
@@ -134,6 +136,8 @@ export default function ProjectsPage() {
   const [editTotalHours, setEditTotalHours] = useState<number>(0)
   const [editLeadPmId, setEditLeadPmId] = useState<string>('')
   const [editLeadDevId, setEditLeadDevId] = useState<string>('')
+  const [editPmLeadId, setEditPmLeadId] = useState<string>('')
+  const [editDevLeadId, setEditDevLeadId] = useState<string>('')
   const [editStartDate, setEditStartDate] = useState<Date | undefined>(undefined)
   const [editEndDate, setEditEndDate] = useState<Date | undefined>(undefined)
   const [editDevStartDate, setEditDevStartDate] = useState<Date | undefined>(undefined)
@@ -158,7 +162,7 @@ export default function ProjectsPage() {
     setLoading(true)
     const { data, error } = await supabase
       .from('projects')
-      .select('*, lead_pm:team_members!projects_lead_pm_id_fkey(*), lead_dev:team_members!projects_lead_dev_id_fkey(*)')
+      .select('*, lead_pm:team_members!projects_lead_pm_id_fkey(*), lead_dev:team_members!projects_lead_dev_id_fkey(*), pm_lead:team_members!projects_pm_lead_id_fkey(*), dev_lead:team_members!projects_dev_lead_id_fkey(*)')
       .eq('category', 'project')
       .order('project_id_display', { ascending: true })
 
@@ -208,6 +212,8 @@ export default function ProjectsPage() {
     setEditTotalHours(project.monthly_hours_total ?? 0)
     setEditLeadPmId(project.lead_pm_id ?? 'none')
     setEditLeadDevId(project.lead_dev_id ?? 'none')
+    setEditPmLeadId(project.pm_lead_id ?? 'none')
+    setEditDevLeadId(project.dev_lead_id ?? 'none')
     setEditStartDate(project.start_date ? parseISO(project.start_date) : undefined)
     setEditEndDate(project.end_date ? parseISO(project.end_date) : undefined)
     setEditDevStartDate(project.dev_start_date ? parseISO(project.dev_start_date) : undefined)
@@ -235,6 +241,8 @@ export default function ProjectsPage() {
       strategy_split_pct: editStrategySplit,
       lead_pm_id: editLeadPmId === 'none' ? null : editLeadPmId,
       lead_dev_id: editLeadDevId === 'none' ? null : editLeadDevId,
+      pm_lead_id: editPmLeadId === 'none' ? null : editPmLeadId,
+      dev_lead_id: editDevLeadId === 'none' ? null : editDevLeadId,
       start_date: editStartDate ? format(editStartDate, 'yyyy-MM-dd') : null,
       end_date: editEndDate ? format(editEndDate, 'yyyy-MM-dd') : null,
       dev_start_date: editDevStartDate ? format(editDevStartDate, 'yyyy-MM-dd') : null,
@@ -251,11 +259,15 @@ export default function ProjectsPage() {
       await fetchProjects()
       const leadPm = teamMembers.find(m => m.id === editLeadPmId) ?? null
       const leadDev = teamMembers.find(m => m.id === editLeadDevId) ?? null
+      const pmLead = teamMembers.find(m => m.id === editPmLeadId) ?? null
+      const devLead = teamMembers.find(m => m.id === editDevLeadId) ?? null
       setSelectedProject(prev => prev ? {
         ...prev,
         ...updates,
         lead_pm: leadPm,
         lead_dev: leadDev,
+        pm_lead: pmLead,
+        dev_lead: devLead,
       } : prev)
       setEditing(false)
     }
@@ -338,6 +350,8 @@ export default function ProjectsPage() {
           p.project_name,
           p.lead_pm?.name,
           p.lead_dev?.name,
+          p.pm_lead?.name,
+          p.dev_lead?.name,
         ]
           .filter(Boolean)
           .join(' ')
@@ -473,7 +487,9 @@ export default function ProjectsPage() {
                   <TableHead>Start Date</TableHead>
                   <TableHead>End Date</TableHead>
                   <TableHead>PM</TableHead>
+                  <TableHead>Lead PM</TableHead>
                   <TableHead>Dev</TableHead>
+                  <TableHead>Lead Dev</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -537,7 +553,13 @@ export default function ProjectsPage() {
                       {project.lead_pm?.name ?? '--'}
                     </TableCell>
                     <TableCell className="text-slate-700">
+                      {project.pm_lead?.name ?? '--'}
+                    </TableCell>
+                    <TableCell className="text-slate-700">
                       {project.lead_dev?.name ?? '--'}
+                    </TableCell>
+                    <TableCell className="text-slate-700">
+                      {project.dev_lead?.name ?? '--'}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -710,7 +732,7 @@ export default function ProjectsPage() {
                         <div className="grid grid-cols-2 gap-3">
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              PM
+                              PM <span className="text-slate-300">(90%)</span>
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {selectedProject.lead_pm?.name ?? 'Unassigned'}
@@ -723,7 +745,20 @@ export default function ProjectsPage() {
                           </div>
                           <div className="rounded-lg border p-3">
                             <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
-                              Dev
+                              Lead PM <span className="text-slate-300">(10%)</span>
+                            </p>
+                            <p className="text-sm font-medium text-slate-900">
+                              {selectedProject.pm_lead?.name ?? 'Unassigned'}
+                            </p>
+                            {selectedProject.pm_lead && (
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                {selectedProject.pm_lead.role}
+                              </p>
+                            )}
+                          </div>
+                          <div className="rounded-lg border p-3">
+                            <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
+                              Dev <span className="text-slate-300">(90%)</span>
                             </p>
                             <p className="text-sm font-medium text-slate-900">
                               {selectedProject.lead_dev?.name ?? 'Unassigned'}
@@ -731,6 +766,19 @@ export default function ProjectsPage() {
                             {selectedProject.lead_dev && (
                               <p className="text-xs text-slate-500 mt-0.5">
                                 {selectedProject.lead_dev.role}
+                              </p>
+                            )}
+                          </div>
+                          <div className="rounded-lg border p-3">
+                            <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
+                              Lead Dev <span className="text-slate-300">(10%)</span>
+                            </p>
+                            <p className="text-sm font-medium text-slate-900">
+                              {selectedProject.dev_lead?.name ?? 'Unassigned'}
+                            </p>
+                            {selectedProject.dev_lead && (
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                {selectedProject.dev_lead.role}
                               </p>
                             )}
                           </div>
@@ -966,9 +1014,9 @@ export default function ProjectsPage() {
 
                       <Separator />
 
-                      {/* PM */}
+                      {/* PM (90%) */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">PM</Label>
+                        <Label className="text-xs text-slate-600">PM <span className="text-slate-400">(90% of PM hours)</span></Label>
                         <Select value={editLeadPmId} onValueChange={setEditLeadPmId}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select PM" />
@@ -986,12 +1034,52 @@ export default function ProjectsPage() {
                         </Select>
                       </div>
 
-                      {/* Dev */}
+                      {/* Lead PM (10%) */}
                       <div className="space-y-1.5">
-                        <Label className="text-xs text-slate-600">Dev</Label>
+                        <Label className="text-xs text-slate-600">Lead PM <span className="text-slate-400">(10% of PM hours)</span></Label>
+                        <Select value={editPmLeadId} onValueChange={setEditPmLeadId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Lead PM" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Unassigned</SelectItem>
+                            {teamMembers
+                              .filter((m) => m.department === 'PM')
+                              .map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Dev (90%) */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-slate-600">Dev <span className="text-slate-400">(90% of Dev hours)</span></Label>
                         <Select value={editLeadDevId} onValueChange={setEditLeadDevId}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select Dev" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Unassigned</SelectItem>
+                            {teamMembers
+                              .filter((m) => m.department === 'Dev')
+                              .map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.name}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Lead Dev (10%) */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-slate-600">Lead Dev <span className="text-slate-400">(10% of Dev hours)</span></Label>
+                        <Select value={editDevLeadId} onValueChange={setEditDevLeadId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select Lead Dev" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none">Unassigned</SelectItem>

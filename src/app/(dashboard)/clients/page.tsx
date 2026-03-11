@@ -63,7 +63,9 @@ function companyBadgeClass(company: string): string {
     case 'MMGY':
       return 'bg-blue-100 text-blue-700 hover:bg-blue-100'
     case 'Origin':
-      return 'bg-purple-100 text-purple-700 hover:bg-purple-100'
+      return 'bg-orange-100 text-orange-700 hover:bg-orange-100'
+    case 'Horizon':
+      return 'bg-red-100 text-red-700 hover:bg-red-100'
     case 'Other':
       return 'bg-gray-100 text-gray-700 hover:bg-gray-100'
     default:
@@ -683,6 +685,7 @@ function EditModePanel({
               <SelectContent>
                 <SelectItem value="Origin">Origin</SelectItem>
                 <SelectItem value="MMGY">MMGY</SelectItem>
+                <SelectItem value="Horizon">Horizon</SelectItem>
                 <SelectItem value="Other">Other</SelectItem>
               </SelectContent>
             </Select>

@@ -262,7 +262,7 @@ export default function DashboardPage() {
       .map((p) => {
         let totalHours = 0
         for (const m of teamMembers) {
-          if (p.lead_pm_id === m.id || p.lead_dev_id === m.id || (p.dev_ids ?? []).includes(m.id)) {
+          if (p.lead_pm_id === m.id || p.lead_dev_id === m.id || p.pm_lead_id === m.id || p.dev_lead_id === m.id || (p.dev_ids ?? []).includes(m.id)) {
             for (const week of weeksToCheck) {
               totalHours += getAssignedHoursForWeek(m.id, week, [p])
             }

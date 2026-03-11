@@ -99,6 +99,8 @@ export type Database = {
           start_date: string | null
           status: string | null
           strategy_split_pct: number | null
+          pm_lead_id: string | null
+          dev_lead_id: string | null
         }
         Insert: {
           category?: string | null
@@ -123,6 +125,8 @@ export type Database = {
           start_date?: string | null
           status?: string | null
           strategy_split_pct?: number | null
+          pm_lead_id?: string | null
+          dev_lead_id?: string | null
         }
         Update: {
           category?: string | null
@@ -147,6 +151,8 @@ export type Database = {
           start_date?: string | null
           status?: string | null
           strategy_split_pct?: number | null
+          pm_lead_id?: string | null
+          dev_lead_id?: string | null
         }
         Relationships: [
           {

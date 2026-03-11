@@ -156,8 +156,11 @@ export function getAssignedHoursForWeek(
     const isAssignedDev = isRetainerLike
       ? (project.dev_ids ?? []).includes(memberId)
       : project.lead_dev_id === memberId
+    // Lead roles (projects only)
+    const isAssignedPmLead = project.pm_lead_id === memberId
+    const isAssignedDevLead = project.dev_lead_id === memberId
 
-    if (!isAssignedPm && !isAssignedDev) continue
+    if (!isAssignedPm && !isAssignedDev && !isAssignedPmLead && !isAssignedDevLead) continue
 
     if (isRetainerLike) {
       // Retainers & internal: monthly hours spread evenly across weeks
@@ -173,6 +176,7 @@ export function getAssignedHoursForWeek(
       }
     } else if (project.category === 'project') {
       // Projects: total hours spread across relevant timeline per role
+      // Lead roles get 10%, main roles get 90% (or 100% if no lead assigned)
       if (!project.start_date || !project.end_date) continue
 
       const projectStart = parseISO(project.start_date)
@@ -180,17 +184,29 @@ export function getAssignedHoursForWeek(
       const totalProjectHours = Number(project.monthly_hours_total) || 0
       const pmPct = Number(project.pm_split_pct) || 0
       const devPct = Number(project.dev_split_pct) || 0
+      const hasPmLead = !!project.pm_lead_id
+      const hasDevLead = !!project.dev_lead_id
 
-      // PM: spread across full project timeline
+      // PM: spread across full project timeline (90% if lead exists, else 100%)
       if (isAssignedPm) {
         if (weekStart <= projectEnd && weekEnd >= projectStart) {
           const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
           const pmWeeks = Math.max(1, pmDays / 7)
-          totalHours += (totalProjectHours * pmPct / 100) / pmWeeks
+          const pmShare = hasPmLead ? 0.9 : 1
+          totalHours += (totalProjectHours * pmPct / 100) * pmShare / pmWeeks
         }
       }
 
-      // Dev: spread across dev date range (falls back to project dates if not set)
+      // PM Lead: 10% of PM hours across full project timeline
+      if (isAssignedPmLead) {
+        if (weekStart <= projectEnd && weekEnd >= projectStart) {
+          const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
+          const pmWeeks = Math.max(1, pmDays / 7)
+          totalHours += (totalProjectHours * pmPct / 100) * 0.1 / pmWeeks
+        }
+      }
+
+      // Dev: spread across dev date range (90% if lead exists, else 100%)
       if (isAssignedDev) {
         const devStart = project.dev_start_date ? parseISO(project.dev_start_date) : projectStart
         const devEnd = project.dev_end_date ? parseISO(project.dev_end_date) : projectEnd
@@ -198,7 +214,20 @@ export function getAssignedHoursForWeek(
         if (weekStart <= devEnd && weekEnd >= devStart) {
           const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
           const devWeeks = Math.max(1, devDays / 7)
-          totalHours += (totalProjectHours * devPct / 100) / devWeeks
+          const devShare = hasDevLead ? 0.9 : 1
+          totalHours += (totalProjectHours * devPct / 100) * devShare / devWeeks
+        }
+      }
+
+      // Dev Lead: 10% of Dev hours across dev date range
+      if (isAssignedDevLead) {
+        const devStart = project.dev_start_date ? parseISO(project.dev_start_date) : projectStart
+        const devEnd = project.dev_end_date ? parseISO(project.dev_end_date) : projectEnd
+
+        if (weekStart <= devEnd && weekEnd >= devStart) {
+          const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
+          const devWeeks = Math.max(1, devDays / 7)
+          totalHours += (totalProjectHours * devPct / 100) * 0.1 / devWeeks
         }
       }
     }
@@ -227,19 +256,23 @@ export function getAssignedHoursBreakdown(
     const isAssignedDev = isRetainerLike
       ? (project.dev_ids ?? []).includes(memberId)
       : project.lead_dev_id === memberId
+    const isAssignedPmLead = project.pm_lead_id === memberId
+    const isAssignedDevLead = project.dev_lead_id === memberId
 
-    if (!isAssignedPm && !isAssignedDev) continue
+    if (!isAssignedPm && !isAssignedDev && !isAssignedPmLead && !isAssignedDevLead) continue
 
     let hours = 0
+    const roles: string[] = []
 
     if (isRetainerLike) {
       const monthlyTotal = Number(project.monthly_hours_total) || 0
       const pmPct = Number(project.pm_split_pct) || 0
       const devPct = Number(project.dev_split_pct) || 0
-      if (isAssignedPm) hours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH
+      if (isAssignedPm) { hours += (monthlyTotal * pmPct / 100) / WEEKS_PER_MONTH; roles.push('PM') }
       if (isAssignedDev) {
         const devCount = (project.dev_ids ?? []).length || 1
         hours += (monthlyTotal * devPct / 100) / WEEKS_PER_MONTH / devCount
+        roles.push('Dev')
       }
     } else if (project.category === 'project') {
       if (!project.start_date || !project.end_date) continue
@@ -249,11 +282,22 @@ export function getAssignedHoursBreakdown(
       const totalProjectHours = Number(project.monthly_hours_total) || 0
       const pmPct = Number(project.pm_split_pct) || 0
       const devPct = Number(project.dev_split_pct) || 0
+      const hasPmLead = !!project.pm_lead_id
+      const hasDevLead = !!project.dev_lead_id
 
       if (isAssignedPm && weekStart <= projectEnd && weekEnd >= projectStart) {
         const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
         const pmWeeks = Math.max(1, pmDays / 7)
-        hours += (totalProjectHours * pmPct / 100) / pmWeeks
+        const pmShare = hasPmLead ? 0.9 : 1
+        hours += (totalProjectHours * pmPct / 100) * pmShare / pmWeeks
+        roles.push('PM')
+      }
+
+      if (isAssignedPmLead && weekStart <= projectEnd && weekEnd >= projectStart) {
+        const pmDays = Math.max(7, differenceInCalendarDays(projectEnd, projectStart) + 1)
+        const pmWeeks = Math.max(1, pmDays / 7)
+        hours += (totalProjectHours * pmPct / 100) * 0.1 / pmWeeks
+        roles.push('PM Lead')
       }
 
       if (isAssignedDev) {
@@ -263,13 +307,27 @@ export function getAssignedHoursBreakdown(
         if (weekStart <= devEnd && weekEnd >= devStart) {
           const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
           const devWeeks = Math.max(1, devDays / 7)
-          hours += (totalProjectHours * devPct / 100) / devWeeks
+          const devShare = hasDevLead ? 0.9 : 1
+          hours += (totalProjectHours * devPct / 100) * devShare / devWeeks
+          roles.push('Dev')
+        }
+      }
+
+      if (isAssignedDevLead) {
+        const devStart = project.dev_start_date ? parseISO(project.dev_start_date) : projectStart
+        const devEnd = project.dev_end_date ? parseISO(project.dev_end_date) : projectEnd
+
+        if (weekStart <= devEnd && weekEnd >= devStart) {
+          const devDays = Math.max(7, differenceInCalendarDays(devEnd, devStart) + 1)
+          const devWeeks = Math.max(1, devDays / 7)
+          hours += (totalProjectHours * devPct / 100) * 0.1 / devWeeks
+          roles.push('Dev Lead')
         }
       }
     }
 
     if (hours > 0) {
-      const role = isAssignedPm && isAssignedDev ? 'PM + Dev' : isAssignedPm ? 'PM' : 'Dev'
+      const role = roles.join(' + ')
       result.push({ project, hours: Math.round(hours * 10) / 10, role })
     }
   }
